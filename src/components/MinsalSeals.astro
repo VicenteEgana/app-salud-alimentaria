@@ -1,0 +1,36 @@
+---
+import type { MinsalSeal } from '../lib/scorer';
+import { sealNutrient } from '../lib/ui';
+
+interface Props {
+  seals: MinsalSeal[];
+  size?: 'sm' | 'md';
+  /** Muestra "Sin sellos" cuando no hay ninguno. */
+  showEmpty?: boolean;
+}
+
+const { seals, size = 'sm', showEmpty = false } = Astro.props;
+const dims = size === 'sm' ? 'h-10 w-10 text-[6px]' : 'h-16 w-16 text-[9px]';
+---
+
+{
+  seals.length > 0 ? (
+    <ul class="flex flex-wrap gap-1" aria-label={`${seals.length} sellos MINSAL`}>
+      {seals.map((seal) => (
+        <li
+          class:list={['seal-octagon flex flex-col items-center justify-center bg-black text-center leading-tight font-bold text-white', dims]}
+          title={seal}
+        >
+          <span>ALTO EN</span>
+          <span>{sealNutrient(seal)}</span>
+        </li>
+      ))}
+    </ul>
+  ) : (
+    showEmpty && (
+      <span class="inline-flex items-center rounded-full border border-stone-300 px-2 py-0.5 text-xs font-medium text-stone-600">
+        0 sellos MINSAL
+      </span>
+    )
+  )
+}

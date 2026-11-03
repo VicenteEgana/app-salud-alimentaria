@@ -1,0 +1,28 @@
+# build
+dist/
+.astro/
+
+# dependencias
+node_modules/
+
+# cloudflare / wrangler
+.wrangler/
+.dev.vars
+
+# salida de scripts/ingest-chile.ts y scripts/reevaluate.ts
+ingest.sql
+reevaluate.sql
+
+# capacitor (plataformas nativas generadas con `npx cap add android|ios`)
+android/
+ios/
+
+# entorno
+.env
+.env.*
+!.env.example
+
+# logs y sistema
+npm-debug.log*
+.DS_Store
+Thumbs.db

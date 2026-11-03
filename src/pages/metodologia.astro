@@ -1,0 +1,210 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { DATA_SOURCE_LABELS } from '../lib/db';
+import {
+  ADDITIVES,
+  ADDITIVE_LEVEL_LABELS,
+  HARD_CAP_CRITICAL,
+  HARD_CAP_SEALS,
+  METHODOLOGY_VERSION,
+  MINSAL_LIMITS,
+  NOVA_LABELS,
+  type AdditiveLevel,
+  type NovaGroup,
+} from '../lib/scorer';
+import { SITE_NAME, href } from '../lib/site';
+import { KIDS_WARNING_TEXT, SWEETENER_ADI } from '../lib/sweeteners';
+import { ADDITIVE_LEVEL_STYLE } from '../lib/ui';
+
+export const prerender = true;
+
+const levels: AdditiveLevel[] = [3, 2, 1];
+const novaGroups: NovaGroup[] = [1, 2, 3, 4];
+const sources = (['jumbo', 'openfoodfacts', 'ia-usuario', 'moderacion'] as const).map((id) => DATA_SOURCE_LABELS[id]);
+---
+
+<MainLayout
+  title="Metodología y fuentes: cómo calculamos el puntaje"
+  description="Cómo evaluamos cada producto: límites de la Ley 20.606, clasificación NOVA, aditivos de riesgo con su evidencia científica, topes de puntaje y definición de falso sin sellos."
+  canonicalPath="/metodologia"
+>
+  <article class="mx-auto max-w-3xl space-y-8 text-stone-800">
+    <header>
+      <p class="text-sm font-semibold text-emerald-700">Versión {METHODOLOGY_VERSION} del método</p>
+      <h1 class="text-3xl font-extrabold">Cómo calculamos el puntaje</h1>
+      <p class="mt-2 text-stone-600">
+        {SITE_NAME} evalúa cada producto con reglas públicas y fuentes citadas. El puntaje describe la composición del
+        producto según estos criterios; no es un diagnóstico ni una recomendación médica personal.
+      </p>
+    </header>
+
+    <section>
+      <h2 class="text-xl font-bold">1. Fórmula</h2>
+      <p class="mt-2">
+        <code class="rounded bg-stone-100 px-1.5 py-0.5">Puntaje = 50 % calidad nutricional + 20 % procesamiento NOVA + 30 % aditivos</code>,
+        redondeado a un entero de 0 a 100.
+      </p>
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">2. Calidad nutricional (Ley 20.606)</h2>
+      <p class="mt-2">
+        Siempre por 100 g o 100 ml, con los límites de la etapa final de la
+        <a class="underline" href="https://www.bcn.cl/leychile/navegar?idNorma=1041570" target="_blank" rel="noopener">Ley 20.606</a>:
+      </p>
+      <div class="mt-3 overflow-x-auto">
+        <table class="w-full min-w-[420px] text-sm">
+          <thead class="text-left text-stone-500">
+            <tr><th class="py-1"></th><th>Calorías</th><th>Azúcares</th><th>Grasas sat.</th><th>Sodio</th></tr>
+          </thead>
+          <tbody>
+            <tr class="border-t border-stone-200">
+              <th class="py-1.5 text-left font-medium">Sólidos (100 g)</th>
+              <td>{MINSAL_LIMITS.solid.calories} kcal</td><td>{MINSAL_LIMITS.solid.sugars} g</td>
+              <td>{MINSAL_LIMITS.solid.saturatedFat} g</td><td>{MINSAL_LIMITS.solid.sodium} mg</td>
+            </tr>
+            <tr class="border-t border-stone-200">
+              <th class="py-1.5 text-left font-medium">Líquidos (100 ml)</th>
+              <td>{MINSAL_LIMITS.liquid.calories} kcal</td><td>{MINSAL_LIMITS.liquid.sugars} g</td>
+              <td>{MINSAL_LIMITS.liquid.saturatedFat} g</td><td>{MINSAL_LIMITS.liquid.sodium} mg</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <ul class="mt-3 list-disc space-y-1 pl-5 text-sm">
+        <li>Parte en 50 puntos. Resta hasta 20 por azúcar, 15 por grasa saturada y 15 por sodio, en proporción al límite.</li>
+        <li>Suma hasta 20 por proteína, 15 por fibra y 15 si el producto no es ultraprocesado (NOVA 1 a 3).</li>
+        <li>
+          <strong>Casi sello:</strong> avisamos cuando un nutriente está entre el 90 % y el 100 % del límite legal.
+        </li>
+        <li>
+          <strong>Lactosa natural:</strong> en lácteos sin azúcar añadido se descuentan los primeros 4,8 g de azúcar.
+        </li>
+        <li>
+          <strong>Alimentos de un ingrediente</strong> (aceite de oliva, maní, nueces): sus calorías y grasas propias no
+          restan puntos.
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">3. Procesamiento (NOVA)</h2>
+      <p class="mt-2">
+        Basado en la clasificación
+        <a class="underline" href="https://doi.org/10.1017/S1368980018003762" target="_blank" rel="noopener">NOVA (Monteiro et al., 2019)</a>.
+        Es ultraprocesado si tiene más de 7 ingredientes, algún aditivo de la lista de abajo o ingredientes industriales
+        (maltodextrina, almidón modificado, jarabe de glucosa, proteína aislada, saborizantes artificiales, entre otros).
+      </p>
+      <ul class="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+        {novaGroups.map((g) => <li class="rounded-xl border border-stone-200 bg-white px-3 py-2"><strong>NOVA {g}</strong> · {NOVA_LABELS[g]} · {({ 1: 100, 2: 80, 3: 50, 4: 0 })[g]} pts</li>)}
+      </ul>
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">4. Aditivos de riesgo y su evidencia</h2>
+      <p class="mt-2 text-sm">
+        Parte en 100 puntos y resta por cada aditivo. Dos o más edulcorantes juntos restan 10 puntos extra. La lista se
+        basa en evaluaciones de agencias (EFSA, IARC/OMS, JECFA) y en estudios publicados; cada aditivo enlaza su fuente.
+      </p>
+      {
+        levels.map((level) => (
+          <div class="mt-4">
+            <h3 class="font-semibold">{ADDITIVE_LEVEL_LABELS[level]}</h3>
+            <ul class="mt-2 space-y-2">
+              {ADDITIVES.filter((a) => a.level === level).map((a) => (
+                <li class:list={['rounded-2xl border p-3 text-sm', ADDITIVE_LEVEL_STYLE[a.level]]}>
+                  <p class="font-semibold">
+                    {a.name} <span class="font-normal opacity-75">{a.code && `· ${a.code}`} · −{a.penalty} pts</span>
+                  </p>
+                  <p class="mt-0.5">{a.concern}</p>
+                  <ul class="mt-1 space-y-0.5 text-xs">
+                    {a.sources.map((s) => (
+                      <li>
+                        <a class="underline" href={s.url} target="_blank" rel="noopener">
+                          {s.label}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">5. Topes de puntaje</h2>
+      <ul class="mt-2 list-disc space-y-1 pl-5 text-sm">
+        <li>Con al menos un aditivo de riesgo crítico, el puntaje no supera {HARD_CAP_CRITICAL}.</li>
+        <li>Con 3 o más sellos MINSAL, el puntaje no supera {HARD_CAP_SEALS}.</li>
+      </ul>
+    </section>
+
+    <section id="falso-sin-sellos" class="scroll-mt-4 rounded-3xl bg-violet-50 p-5">
+      <h2 class="text-xl font-bold text-violet-900">6. ¿Qué es un "falso sin sellos"?</h2>
+      <p class="mt-2 text-sm text-violet-950">
+        Es nuestra etiqueta para un producto que cumple <strong>las tres</strong> condiciones: no tiene ningún sello
+        MINSAL, es ultraprocesado (NOVA 4) y contiene al menos un aditivo o edulcorante de la lista. No dice que el
+        producto sea ilegal ni dañino: dice que la ausencia de sellos no refleja todo lo que contiene.
+      </p>
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">7. Modo niños y edulcorantes</h2>
+      <p class="mt-2 text-sm">
+        El MINSAL propuso agregar al frente de los envases con edulcorantes la leyenda "{KIDS_WARNING_TEXT}"
+        (art. 120 ter del Reglamento Sanitario de los Alimentos, en trámite). La mostramos como referencia en los productos
+        a los que aplicaría. Cuando el envase declara los mg de edulcorante, estimamos qué parte de la ingesta diaria
+        admisible (IDA) de
+        <a class="underline" href="https://apps.who.int/food-additives-contaminants-jecfa-database/" target="_blank" rel="noopener">JECFA</a>
+        cubre una porción según el peso del niño.
+      </p>
+      <ul class="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+        {Object.entries(SWEETENER_ADI).map(([id, adi]) => {
+          const def = ADDITIVES.find((a) => a.id === id);
+          return <li>{def?.name ?? id}: {adi.mgPerKg} mg/kg/día</li>;
+        })}
+      </ul>
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">8. Origen y actualización de los datos</h2>
+      <ul class="mt-2 list-disc space-y-1 pl-5 text-sm">
+        {sources.map((s) => <li>{s}</li>)}
+      </ul>
+      <p class="mt-2 text-sm">
+        Cada ficha muestra su fuente y su fecha. Los precios vienen de la tienda en línea y pueden variar en sala. Si
+        un fabricante cambia la receta, el historial de la ficha registra qué cambió.
+      </p>
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">9. Independencia</h2>
+      <p class="mt-2 text-sm">
+        Ninguna marca puede pagar para cambiar su puntaje, aparecer antes en un ranking o quitar una advertencia. Los
+        ingresos por datos para empresas (<a class="underline" href={href('/empresas')}>ver Empresas</a>) usan el mismo método
+        público que ve cualquier persona.
+      </p>
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">10. Derecho a réplica y correcciones</h2>
+      <p class="mt-2 text-sm">
+        Si una ficha tiene un error, o si eres el fabricante y quieres aportar la etiqueta vigente,
+        <a class="underline" href={href('/reportar?tipo=marca')}>solicita una revisión</a>. Respondemos y corregimos los
+        datos verificados; el método se aplica igual a todos los productos.
+      </p>
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">Limitaciones</h2>
+      <p class="mt-2 text-sm">
+        La detección de aditivos usa la lista de ingredientes publicada; un error de transcripción en la fuente puede
+        afectar el resultado. Los escaneos leídos por IA quedan marcados como pendientes hasta que un segundo escaneo
+        coincide o el equipo los revisa.
+      </p>
+    </section>
+  </article>
+</MainLayout>

@@ -1,0 +1,18 @@
+# Copiar como .dev.vars (Wrangler lo lee automáticamente en local). No versionar .dev.vars.
+GEMINI_API_KEY="tu_api_key_de_google_ai_studio"
+ADMIN_SECRET="tu_clave_secreta_para_moderar"
+
+# --- Opcionales ---
+# Cloudflare Turnstile: con token válido el límite de lecturas con IA por IP sube (10/h en vez de 3/h).
+# TURNSTILE_SECRET_KEY=""
+# Límites de lecturas con IA (por defecto 10 por IP/hora con Turnstile, 3 sin, 500 globales por día).
+# ANALYZE_LIMIT_PER_IP_HOUR="10"
+# ANALYZE_LIMIT_PER_IP_HOUR_NO_CAPTCHA="3"
+# ANALYZE_LIMIT_GLOBAL_DAY="500"
+
+# WhatsApp Cloud API (Meta). El webhook es /api/whatsapp.
+# WHATSAPP_TOKEN=""
+# WHATSAPP_PHONE_NUMBER_ID=""
+# WHATSAPP_VERIFY_TOKEN=""
+# WHATSAPP_APP_SECRET=""
+# WHATSAPP_GRAPH_VERSION="v23.0"

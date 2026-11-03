@@ -1,0 +1,15 @@
+name = "sanopasillo"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sanopasillo-db"
+# Reemplazar por el id real tras `npx wrangler d1 create sanopasillo-db`.
+# En local (platformProxy y `wrangler d1 execute --local`) el id no se usa.
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# Secretos (no van aquí):
+#   local      -> archivo .dev.vars (GEMINI_API_KEY, ADMIN_SECRET)
+#   producción -> npx wrangler pages secret put GEMINI_API_KEY / ADMIN_SECRET

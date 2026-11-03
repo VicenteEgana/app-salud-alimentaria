@@ -1,0 +1,181 @@
+---
+import type { Product } from '../lib/db';
+import { ADDITIVE_LEVEL_LABELS, NOVA_LABELS, type Nutrients } from '../lib/scorer';
+import { href } from '../lib/site';
+import { formatNumber } from '../lib/text';
+import { ADDITIVE_LEVEL_STYLE, NOVA_BADGE, tierStyle } from '../lib/ui';
+import MinsalSeals from './MinsalSeals.astro';
+import ScoreCircle from './ScoreCircle.astro';
+
+interface Props {
+  a: Product;
+  b: Product;
+}
+
+const { a, b } = Astro.props;
+const sides = [a, b] as const;
+
+type Winner = 0 | 1 | null;
+/** Índice del ganador de la fila; null si empatan. */
+function winner(va: number, vb: number, better: 'lower' | 'higher'): Winner {
+  if (va === vb) return null;
+  return (better === 'lower' ? va < vb : va > vb) ? 0 : 1;
+}
+
+const nutrientRows: { key: keyof Nutrients; label: string; unit: string; better: 'lower' | 'higher' }[] = [
+  { key: 'calories', label: 'Calorías', unit: 'kcal', better: 'lower' },
+  { key: 'sugars', label: 'Azúcares', unit: 'g', better: 'lower' },
+  { key: 'saturatedFat', label: 'Grasas saturadas', unit: 'g', better: 'lower' },
+  { key: 'sodium', label: 'Sodio', unit: 'mg', better: 'lower' },
+  { key: 'protein', label: 'Proteínas', unit: 'g', better: 'higher' },
+  { key: 'fiber', label: 'Fibra', unit: 'g', better: 'higher' },
+];
+
+const pillarRows = [
+  { label: 'Calidad nutricional (50 %)', values: sides.map((p) => p.evaluation.nutritionScore) },
+  { label: 'Procesamiento NOVA (20 %)', values: sides.map((p) => p.evaluation.novaScore) },
+  { label: 'Aditivos (30 %)', values: sides.map((p) => p.evaluation.additivesScore) },
+];
+
+const overall = winner(a.finalScore, b.finalScore, 'higher');
+const mixedBasis = a.isLiquid !== b.isLiquid;
+---
+
+<div class="overflow-clip rounded-3xl border border-stone-200 bg-white shadow-sm">
+  <!-- Cabecera dual fija: nombres y puntajes siempre visibles al hacer scroll -->
+  <div class="sticky top-0 z-20 grid grid-cols-2 divide-x divide-stone-200 border-b border-stone-200 bg-white/95 backdrop-blur">
+    {
+      sides.map((p, i) => (
+        <a href={href(`/producto/${p.slug}`)} class="flex flex-col items-center gap-2 p-3 text-center sm:flex-row sm:text-left">
+          <ScoreCircle score={p.finalScore} size="md" />
+          <div class="min-w-0">
+            <p class="truncate text-[11px] font-medium tracking-wide text-stone-500 uppercase">{p.brand}</p>
+            <p class="line-clamp-2 text-sm leading-snug font-semibold">{p.name}</p>
+            {overall === i && <p class="mt-0.5 text-xs font-bold text-emerald-700">✓ Mejor opción</p>}
+          </div>
+        </a>
+      ))
+    }
+  </div>
+
+  <div class="divide-y divide-stone-100">
+    <!-- Veredicto -->
+    <section class="p-4">
+      <h2 class="mb-3 text-sm font-semibold tracking-wide text-stone-500 uppercase">Veredicto</h2>
+      <div class="grid grid-cols-2 gap-3">
+        {
+          sides.map((p) => (
+            <div class:list={['rounded-2xl border p-3 text-sm', tierStyle(p.finalScore).soft]}>
+              <p class:list={['font-bold', tierStyle(p.finalScore).text]}>{tierStyle(p.finalScore).label}</p>
+              {p.isFakeHealthy && <p class="mt-1 font-semibold text-violet-700">Falso sin sellos</p>}
+              {p.evaluation.hardCapReason && <p class="mt-1 text-xs text-stone-600">{p.evaluation.hardCapReason}</p>}
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- Sellos MINSAL vs NOVA -->
+    <section class="p-4">
+      <h2 class="mb-3 text-sm font-semibold tracking-wide text-stone-500 uppercase">Sellos MINSAL vs. procesamiento real</h2>
+      <div class="grid grid-cols-2 gap-3">
+        {
+          sides.map((p) => (
+            <div class="flex flex-col items-start gap-2">
+              <MinsalSeals seals={p.evaluation.minsalSeals} showEmpty />
+              <span class:list={['rounded-full px-2.5 py-1 text-xs font-semibold', NOVA_BADGE[p.evaluation.novaGroup]]}>
+                NOVA {p.evaluation.novaGroup} · {NOVA_LABELS[p.evaluation.novaGroup]}
+              </span>
+              {p.evaluation.borderlineWarnings.map((w) => (
+                <span class="text-xs text-amber-700">⚠ {w}</span>
+              ))}
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- Aditivos -->
+    <section class="p-4">
+      <h2 class="mb-3 text-sm font-semibold tracking-wide text-stone-500 uppercase">Aditivos de riesgo</h2>
+      <div class="grid grid-cols-2 gap-3">
+        {
+          sides.map((p) => (
+            <ul class="space-y-2">
+              {p.evaluation.additives.length === 0 ? (
+                <li class="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-xs font-medium text-emerald-800">
+                  Sin aditivos de riesgo
+                </li>
+              ) : (
+                [...p.evaluation.additives]
+                  .sort((x, y) => y.level - x.level)
+                  .map((ad) => (
+                    <li class:list={['rounded-xl border p-2.5 text-xs', ADDITIVE_LEVEL_STYLE[ad.level]]}>
+                      <p class="font-semibold">{ad.name}</p>
+                      <p class="opacity-80">
+                        {ADDITIVE_LEVEL_LABELS[ad.level]} · −{ad.penalty} pts
+                      </p>
+                    </li>
+                  ))
+              )}
+              {p.evaluation.multiSweetenerPenalty && (
+                <li class="text-xs text-violet-700">Mezcla de edulcorantes: −10 pts extra</li>
+              )}
+            </ul>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- Tabla nutricional -->
+    <section class="p-4">
+      <h2 class="mb-1 text-sm font-semibold tracking-wide text-stone-500 uppercase">Por cada 100 g / 100 ml</h2>
+      {mixedBasis && <p class="mb-2 text-xs text-stone-500">Atención: uno se mide por 100 ml y el otro por 100 g.</p>}
+      <dl class="mt-2">
+        {
+          nutrientRows.map((row) => {
+            const win = winner(a.nutrients[row.key], b.nutrients[row.key], row.better);
+            return (
+              <div class="border-b border-stone-100 py-2 last:border-0">
+                <dt class="mb-1 text-center text-xs text-stone-500">{row.label}</dt>
+                <dd class="grid grid-cols-2 gap-3 text-center tabular-nums">
+                  {sides.map((p, i) => (
+                    <span class:list={['rounded-lg py-1 font-semibold', win === i ? 'bg-emerald-50 text-emerald-700' : 'text-stone-800']}>
+                      {win === i && '✓ '}
+                      {formatNumber(p.nutrients[row.key])} {row.unit}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            );
+          })
+        }
+      </dl>
+    </section>
+
+    <!-- Puntaje por pilar -->
+    <section class="p-4">
+      <h2 class="mb-1 text-sm font-semibold tracking-wide text-stone-500 uppercase">Puntaje por pilar</h2>
+      <dl class="mt-2">
+        {
+          pillarRows.map((row) => {
+            const win = winner(row.values[0]!, row.values[1]!, 'higher');
+            return (
+              <div class="border-b border-stone-100 py-2 last:border-0">
+                <dt class="mb-1 text-center text-xs text-stone-500">{row.label}</dt>
+                <dd class="grid grid-cols-2 gap-3 text-center tabular-nums">
+                  {row.values.map((v, i) => (
+                    <span class:list={['rounded-lg py-1 font-semibold', win === i ? 'bg-emerald-50 text-emerald-700' : 'text-stone-800']}>
+                      {win === i && '✓ '}
+                      {v} / 100
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            );
+          })
+        }
+      </dl>
+    </section>
+  </div>
+</div>

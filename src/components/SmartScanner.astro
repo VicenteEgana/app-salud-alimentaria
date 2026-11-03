@@ -1,0 +1,406 @@
+---
+/**
+ * Escáner de pasillo:
+ *   1. Lee EAN-13 / EAN-8 con la cámara (html5-qrcode) o a mano.
+ *   2. Consulta /api/product/[ean] (D1 → VTEX/OFF).
+ *   3. Si no existe, pide una foto de la etiqueta, la comprime en canvas (< 120 KB)
+ *      y la envía a /api/analyze-label (Gemini).
+ * En la app nativa usa @capacitor/camera y @capacitor/haptics; en la web, input file y vibrate.
+ * Sin conexión, busca en el paquete de productos guardado en el dispositivo.
+ */
+import { TURNSTILE_SITE_KEY } from '../lib/site';
+---
+
+<section id="smart-scanner" class="space-y-4">
+  <div class="relative overflow-hidden rounded-3xl bg-stone-900">
+    <div id="scanner-reader" class="aspect-[4/3] w-full [&_video]:h-full [&_video]:w-full [&_video]:object-cover"></div>
+    <div id="scanner-idle" class="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center text-white">
+      <svg aria-hidden="true" viewBox="0 0 24 24" class="h-12 w-12 opacity-80" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13 8v8M17 8v8"></path>
+      </svg>
+      <p class="text-sm text-stone-300">Apunta al código de barras del envase</p>
+      <button id="scanner-start" type="button" class="rounded-2xl bg-emerald-500 px-6 py-3 font-semibold text-white shadow-lg active:scale-95">
+        Activar cámara
+      </button>
+    </div>
+    <button
+      id="scanner-stop"
+      type="button"
+      hidden
+      class="absolute top-3 right-3 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white"
+    >
+      Detener
+    </button>
+  </div>
+
+  <form id="scanner-manual" class="flex gap-2">
+    <label for="scanner-ean" class="sr-only">Código de barras</label>
+    <input
+      id="scanner-ean"
+      name="ean"
+      inputmode="numeric"
+      autocomplete="off"
+      pattern="[0-9]{8,14}"
+      placeholder="O escribe el código (EAN)"
+      class="min-w-0 flex-1 rounded-2xl border border-stone-300 bg-white px-4 py-3 text-base tabular-nums focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 focus:outline-none"
+    />
+    <button type="submit" class="rounded-2xl bg-stone-900 px-5 py-3 font-semibold text-white">Buscar</button>
+  </form>
+
+  <p id="scanner-status" class="min-h-5 text-center text-sm text-stone-600" aria-live="polite"></p>
+
+  <div id="scanner-result"></div>
+
+  <div id="scanner-ai" hidden class="space-y-3 rounded-3xl border-2 border-dashed border-emerald-300 bg-emerald-50 p-4">
+    <div>
+      <h2 class="font-bold text-emerald-900">No conocemos este producto (todavía)</h2>
+      <p class="mt-1 text-sm text-emerald-900/80">
+        Fotografía la etiqueta trasera donde se vean la <strong>lista de ingredientes</strong> y la
+        <strong>tabla nutricional</strong>. Nuestra IA la lee y lo evalúa al instante.
+      </p>
+    </div>
+    <label class="block">
+      <span class="text-xs font-medium text-emerald-900">Nombre del producto (opcional)</span>
+      <input
+        id="scanner-hint"
+        maxlength="120"
+        placeholder="Ej: Yogurt protein vainilla"
+        class="mt-1 w-full rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-base focus:border-emerald-500 focus:outline-none"
+      />
+    </label>
+    <div id="scanner-turnstile" class="min-h-0" data-sitekey={TURNSTILE_SITE_KEY ?? ''}></div>
+    <button id="scanner-photo" type="button" class="w-full rounded-2xl bg-emerald-600 px-4 py-3 font-semibold text-white active:scale-[0.98]">
+      Fotografiar etiqueta
+    </button>
+    <input id="scanner-file" type="file" accept="image/*" capture="environment" hidden />
+  </div>
+</section>
+
+<script>
+  import type { Html5Qrcode } from 'html5-qrcode';
+  import { Capacitor } from '@capacitor/core';
+  import { Camera } from '@capacitor/camera';
+  import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
+  import {
+    isSaved,
+    lookupOffline,
+    offlinePackInfo,
+    refreshOfflinePack,
+    toggleSaved,
+  } from '../lib/client-store';
+  import type { Offer, Product } from '../lib/db';
+  import { offlineResultHtml, scanResultHtml, type ScanStatus } from '../lib/product-html';
+  import { loadProfiles } from '../lib/profiles';
+  import { API_BASE } from '../lib/site';
+  import { isValidEan } from '../lib/text';
+
+  declare global {
+    interface Window {
+      turnstile?: {
+        render: (el: HTMLElement, opts: { sitekey: string; size?: string }) => string;
+        getResponse: (id: string) => string | undefined;
+        reset: (id: string) => void;
+      };
+    }
+  }
+
+  const MAX_IMAGE_BYTES = 120 * 1024;
+  const isNative = Capacitor.isNativePlatform();
+
+  const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  const startBtn = $<HTMLButtonElement>('scanner-start');
+  const stopBtn = $<HTMLButtonElement>('scanner-stop');
+  const idle = $<HTMLDivElement>('scanner-idle');
+  const form = $<HTMLFormElement>('scanner-manual');
+  const eanInput = $<HTMLInputElement>('scanner-ean');
+  const statusEl = $<HTMLParagraphElement>('scanner-status');
+  const resultEl = $<HTMLDivElement>('scanner-result');
+  const aiBox = $<HTMLDivElement>('scanner-ai');
+  const hintInput = $<HTMLInputElement>('scanner-hint');
+  const photoBtn = $<HTMLButtonElement>('scanner-photo');
+  const fileInput = $<HTMLInputElement>('scanner-file');
+
+  const turnstileEl = $<HTMLDivElement>('scanner-turnstile');
+
+  let scanner: Html5Qrcode | null = null;
+  let currentEan = '';
+  let busy = false;
+  let lastResult: { product: Product; offers: Offer[] } | null = null;
+  let turnstileWidget: string | null = null;
+
+  /** Carga Turnstile solo si hay site key y cuando se abre la lectura con IA. */
+  function ensureTurnstile() {
+    const sitekey = turnstileEl.dataset.sitekey;
+    if (!sitekey || turnstileWidget) return;
+    const render = () => {
+      if (window.turnstile && !turnstileWidget) turnstileWidget = window.turnstile.render(turnstileEl, { sitekey, size: 'flexible' });
+    };
+    if (window.turnstile) return render();
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.onload = render;
+    document.head.appendChild(script);
+  }
+
+  const setStatus = (text: string, tone: 'info' | 'error' = 'info') => {
+    statusEl.textContent = text;
+    statusEl.className = `min-h-5 text-center text-sm ${tone === 'error' ? 'text-red-700' : 'text-stone-600'}`;
+  };
+
+  async function feedback(kind: 'scan' | 'success' | 'error') {
+    try {
+      if (isNative) {
+        if (kind === 'scan') await Haptics.impact({ style: ImpactStyle.Medium });
+        else await Haptics.notification({ type: kind === 'success' ? NotificationType.Success : NotificationType.Error });
+      } else {
+        navigator.vibrate?.(kind === 'error' ? [60, 40, 60] : 40);
+      }
+    } catch {
+      // La vibración es opcional.
+    }
+  }
+
+  // --- Cámara / código de barras ----------------------------------------------
+
+  async function startScanner() {
+    resultEl.innerHTML = '';
+    aiBox.hidden = true;
+    setStatus('');
+    try {
+      // html5-qrcode pesa ~350 KB: se descarga recién al activar la cámara.
+      const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+      scanner ??= new Html5Qrcode('scanner-reader', {
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+        ],
+        useBarCodeDetectorIfSupported: true,
+        verbose: false,
+      });
+      await scanner.start(
+        { facingMode: 'environment' },
+        {
+          fps: 12,
+          qrbox: (w, h) => ({ width: Math.floor(Math.min(w * 0.85, 340)), height: Math.floor(Math.min(h * 0.45, 170)) }),
+        },
+        (decoded) => void onDecoded(decoded),
+        () => {},
+      );
+      idle.hidden = true;
+      stopBtn.hidden = false;
+    } catch (err) {
+      console.error(err);
+      setStatus('No pudimos abrir la cámara. Revisa los permisos o escribe el código a mano.', 'error');
+    }
+  }
+
+  async function stopScanner() {
+    if (scanner?.isScanning) await scanner.stop().catch(() => {});
+    idle.hidden = false;
+    stopBtn.hidden = true;
+  }
+
+  async function onDecoded(text: string) {
+    const ean = text.replace(/\D/g, '');
+    if (busy || !isValidEan(ean)) return;
+    await feedback('scan');
+    await stopScanner();
+    await lookup(ean);
+  }
+
+  // --- Cascada: base de datos / catálogos -------------------------------------
+
+  async function lookup(ean: string) {
+    if (busy) return;
+    busy = true;
+    currentEan = ean;
+    eanInput.value = ean;
+    resultEl.innerHTML = '';
+    aiBox.hidden = true;
+    setStatus(`Buscando ${ean}…`);
+    try {
+      const res = await fetch(`${API_BASE}/api/product/${ean}`);
+      if (res.ok) {
+        const data = (await res.json()) as { product: Product; offers?: Offer[]; source: string };
+        renderProduct(data.product, data.source === 'database' ? 'database' : 'catalog', data.offers ?? []);
+      } else if (res.status === 404) {
+        await feedback('error');
+        setStatus(`El código ${ean} no está en nuestra base ni en los catálogos.`);
+        aiBox.hidden = false;
+        ensureTurnstile();
+        aiBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setStatus(data.error ?? 'Ocurrió un error al buscar el producto.', 'error');
+      }
+    } catch {
+      const offline = lookupOffline(ean);
+      const pack = offlinePackInfo();
+      if (offline && pack) {
+        setStatus('');
+        resultEl.innerHTML = offlineResultHtml(offline, pack.savedAt);
+        void feedback('success');
+      } else {
+        setStatus('Sin conexión y este producto no está guardado en el dispositivo.', 'error');
+      }
+    } finally {
+      busy = false;
+    }
+  }
+
+  function renderProduct(product: Product, status: ScanStatus, offers: Offer[] = []) {
+    setStatus('');
+    lastResult = { product, offers };
+    resultEl.innerHTML = scanResultHtml(product, status, { offers, profiles: loadProfiles(), saved: isSaved(product.ean) });
+    void feedback('success');
+    resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  resultEl.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-save-ean]');
+    if (!button || !lastResult || button.dataset.saveEan !== lastResult.product.ean) return;
+    const saved = toggleSaved(lastResult.product, lastResult.offers);
+    button.textContent = saved ? '✓ En mi lista' : '+ Mi lista';
+  });
+
+  // --- Fallback IA: foto de la etiqueta ---------------------------------------
+
+  function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('No se pudo leer la imagen'));
+      img.src = src;
+    });
+  }
+
+  const canvasToBlob = (canvas: HTMLCanvasElement, quality: number) =>
+    new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob falló'))), 'image/jpeg', quality),
+    );
+
+  const blobToDataUrl = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+
+  /**
+   * Comprime a JPEG < 120 KB: baja primero la calidad (0.82 → 0.5) y luego la resolución,
+   * sin bajar de ~900 px de lado mayor para que la letra chica de la tabla siga legible.
+   */
+  async function compressImage(src: string): Promise<string> {
+    const img = await loadImage(src);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas no disponible');
+
+    let maxSide = 1600;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+      canvas.width = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      for (const quality of [0.82, 0.72, 0.62, 0.5]) {
+        const blob = await canvasToBlob(canvas, quality);
+        if (blob.size <= MAX_IMAGE_BYTES || (maxSide <= 900 && quality === 0.5)) return blobToDataUrl(blob);
+      }
+      maxSide = Math.max(900, Math.round(maxSide * 0.8));
+    }
+    return blobToDataUrl(await canvasToBlob(canvas, 0.5));
+  }
+
+  /** Devuelve una URL cargable en <img> (webPath nativo o data URL en la web). */
+  async function capturePhoto(): Promise<string | null> {
+    if (isNative) {
+      const photo = await Camera.takePhoto({
+        quality: 85,
+        targetWidth: 1600,
+        targetHeight: 1600,
+        correctOrientation: true,
+      });
+      return photo.webPath ?? null;
+    }
+    return new Promise((resolve) => {
+      fileInput.value = '';
+      fileInput.onchange = async () => {
+        const file = fileInput.files?.[0];
+        resolve(file ? await blobToDataUrl(file) : null);
+      };
+      fileInput.click();
+    });
+  }
+
+  async function analyzeLabel() {
+    if (busy || !currentEan) return;
+    let photo: string | null;
+    try {
+      photo = await capturePhoto();
+    } catch {
+      return; // El usuario canceló la cámara.
+    }
+    if (!photo) return;
+
+    busy = true;
+    photoBtn.disabled = true;
+    try {
+      setStatus('Optimizando la foto…');
+      const imageBase64 = await compressImage(photo);
+      setStatus('Leyendo la etiqueta con IA… (unos segundos)');
+      const res = await fetch(`${API_BASE}/api/analyze-label`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ean: currentEan,
+          productNameHint: hintInput.value,
+          imageBase64,
+          turnstileToken: turnstileWidget ? window.turnstile?.getResponse(turnstileWidget) : undefined,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { product?: Product; status?: ScanStatus; error?: string };
+      if (res.ok && data.product) {
+        aiBox.hidden = true;
+        renderProduct(data.product, data.status ?? 'pending');
+      } else if (res.status === 422) {
+        await feedback('error');
+        setStatus(`${data.error ?? 'No pudimos leer la etiqueta'}. Prueba con una foto más cercana y con buena luz.`, 'error');
+      } else {
+        setStatus(data.error ?? 'No pudimos analizar la etiqueta. Inténtalo de nuevo.', 'error');
+      }
+    } catch {
+      setStatus('Sin conexión. Revisa tu internet e inténtalo de nuevo.', 'error');
+    } finally {
+      busy = false;
+      photoBtn.disabled = false;
+      if (turnstileWidget) window.turnstile?.reset(turnstileWidget);
+    }
+  }
+
+  // --- Eventos -----------------------------------------------------------------
+
+  startBtn.addEventListener('click', () => void startScanner());
+  stopBtn.addEventListener('click', () => void stopScanner());
+  photoBtn.addEventListener('click', () => void analyzeLabel());
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const ean = eanInput.value.replace(/\D/g, '');
+    if (!isValidEan(ean)) {
+      setStatus('Ese código no parece un EAN válido. Revisa los dígitos.', 'error');
+      return;
+    }
+    void stopScanner().then(() => lookup(ean));
+  });
+
+  // /escanear?ean=780… (desde el buscador de la home)
+  const initialEan = new URLSearchParams(location.search).get('ean')?.replace(/\D/g, '');
+  if (initialEan && isValidEan(initialEan)) void lookup(initialEan);
+
+  window.addEventListener('pagehide', () => void stopScanner());
+
+  // Paquete para escanear sin conexión (se refresca cada 7 días, en segundo plano).
+  setTimeout(() => void refreshOfflinePack(API_BASE), 1500);
+</script>

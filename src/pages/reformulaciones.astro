@@ -1,0 +1,55 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import ScoreCircle from '../components/ScoreCircle.astro';
+import { getRecentHistory } from '../lib/db';
+import { describeChange } from '../lib/history';
+import { formatDate } from '../lib/ui';
+
+const rows = await getRecentHistory(Astro.locals.runtime.env.DB, { limit: 60 });
+const changes = rows.map((r) => ({ ...r, lines: describeChange(r.entry) })).filter((r) => r.lines.length > 0);
+Astro.response.headers.set('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
+---
+
+<MainLayout
+  title="Reformulaciones: productos que cambiaron su receta"
+  description="Productos de supermercado en Chile que cambiaron sus ingredientes o su tabla nutricional: qué agregaron, qué quitaron y cómo cambió su puntaje."
+  canonicalPath="/reformulaciones"
+  noindex={changes.length === 0}
+>
+  <div class="mx-auto max-w-3xl">
+    <h1 class="text-2xl font-extrabold">Reformulaciones</h1>
+    <p class="mt-1 text-stone-600">
+      Cuando un fabricante cambia la receta de un producto verificado, lo registramos. Así se ve si un "cero azúcar" sumó
+      edulcorantes o si un pan bajó su sodio.
+    </p>
+
+    {changes.length === 0 && <p class="mt-6 rounded-2xl border border-stone-200 bg-white p-5 text-stone-600">Aún no hay cambios registrados.</p>}
+
+    <ol class="mt-6 space-y-3">
+      {
+        changes.map(({ entry, product, lines }) => (
+          <li class="rounded-2xl border border-stone-200 bg-white p-4">
+            <div class="flex items-center gap-3">
+              <ScoreCircle score={product.finalScore} size="sm" />
+              <div class="min-w-0 flex-1">
+                <a href={`/producto/${product.slug}`} class="font-semibold hover:underline">
+                  {product.name}
+                </a>
+                <p class="text-xs text-stone-500">
+                  {product.brand} · {formatDate(entry.changedAt)} · puntaje {entry.oldScore} → {entry.newScore}
+                </p>
+              </div>
+            </div>
+            <ul class="mt-2 space-y-0.5 text-sm">
+              {lines.map((l) => (
+                <li class:list={[l.kind === 'worse' ? 'text-red-700' : l.kind === 'better' ? 'text-emerald-700' : 'text-stone-700']}>
+                  {l.kind === 'worse' ? '▲' : l.kind === 'better' ? '▼' : '•'} {l.text}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</MainLayout>

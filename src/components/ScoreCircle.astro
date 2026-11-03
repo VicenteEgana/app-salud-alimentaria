@@ -1,0 +1,29 @@
+---
+import { tierStyle } from '../lib/ui';
+
+interface Props {
+  score: number;
+  size?: 'sm' | 'md' | 'lg';
+  class?: string;
+}
+
+const { score, size = 'md', class: className = '' } = Astro.props;
+const { color } = tierStyle(score);
+const dims = {
+  sm: 'h-11 w-11 text-sm',
+  md: 'h-16 w-16 text-xl',
+  lg: 'h-28 w-28 text-4xl',
+}[size];
+const inset = { sm: 'inset-[4px]', md: 'inset-[5px]', lg: 'inset-[8px]' }[size];
+---
+
+<div
+  class:list={['relative shrink-0 rounded-full', dims, className]}
+  style={`background: conic-gradient(${color} ${score}%, #e7e5e4 0)`}
+  role="img"
+  aria-label={`Puntaje ${score} de 100`}
+>
+  <div class:list={['absolute flex items-center justify-center rounded-full bg-white font-bold tabular-nums', inset]} style={`color: ${color}`}>
+    {score}
+  </div>
+</div>

@@ -1,0 +1,41 @@
+{
+  "name": "sanopasillo",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "build:app": "cross-env BUILD_TARGET=capacitor astro build",
+    "preview": "wrangler pages dev ./dist",
+    "check": "astro check",
+    "test": "vitest run",
+    "db:init": "wrangler d1 execute sanopasillo-db --local --file=./schema.sql",
+    "db:migrate": "wrangler d1 execute sanopasillo-db --local --file=./migrations/0002_mejoras.sql",
+    "db:seed": "tsx scripts/seed-local.ts && wrangler d1 execute sanopasillo-db --local --file=./seed.sql",
+    "db:reevaluate": "tsx scripts/reevaluate.ts",
+    "ingest": "tsx scripts/ingest-chile.ts",
+    "api-key": "tsx scripts/create-api-key.ts",
+    "cap:sync": "npm run build:app && cap sync"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^12.6.13",
+    "@capacitor/camera": "^8.2.6",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/haptics": "^8.0.2",
+    "@tailwindcss/vite": "^4.3.4",
+    "astro": "^5.18.2",
+    "html5-qrcode": "^2.3.8",
+    "tailwindcss": "^4.3.4"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@capacitor/cli": "^8.6.0",
+    "@cloudflare/workers-types": "^5.20261103.1",
+    "cross-env": "^10.1.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.157.0"
+  }
+}

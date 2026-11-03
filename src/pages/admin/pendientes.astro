@@ -1,0 +1,240 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { CATEGORIES } from '../../lib/categories';
+import { getPendingProducts } from '../../lib/db';
+
+const pending = await getPendingProducts(Astro.locals.runtime.env.DB);
+Astro.response.headers.set('Cache-Control', 'no-store');
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+
+const nutrientFields = [
+  { key: 'calories', label: 'Calorías (kcal)' },
+  { key: 'sugars', label: 'Azúcares (g)' },
+  { key: 'saturatedFat', label: 'Grasas sat. (g)' },
+  { key: 'sodium', label: 'Sodio (mg)' },
+  { key: 'protein', label: 'Proteínas (g)' },
+  { key: 'fiber', label: 'Fibra (g)' },
+] as const;
+
+const inputClass = 'mt-1 w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none';
+---
+
+<MainLayout title="Moderación: escaneos pendientes" description="Panel interno de moderación." noindex>
+  <div class="flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-extrabold">Escaneos pendientes</h1>
+      <p class="text-sm text-stone-600">{pending.length} productos leídos por IA esperando revisión.</p>
+    </div>
+    <label class="block w-full sm:w-72">
+      <span class="text-xs font-medium text-stone-600">Clave de administración</span>
+      <input id="admin-secret" type="password" autocomplete="current-password" class={inputClass} placeholder="x-admin-secret" />
+    </label>
+  </div>
+
+  <p id="admin-status" class="mt-3 min-h-5 text-sm" aria-live="polite"></p>
+
+  <!-- Reportes y solicitudes de marcas: se cargan con la clave porque incluyen correos -->
+  <section class="mt-4 rounded-3xl border border-stone-200 bg-white p-4 sm:p-5">
+    <div class="flex items-center justify-between gap-3">
+      <h2 class="font-bold">Reportes y solicitudes de revisión</h2>
+      <button id="reports-load" type="button" class="rounded-xl border border-stone-300 px-3 py-1.5 text-sm font-semibold">Cargar</button>
+    </div>
+    <ul id="reports-list" class="mt-3 space-y-2 text-sm"><li class="text-stone-500">Ingresa la clave y toca "Cargar".</li></ul>
+  </section>
+
+  <datalist id="category-options">
+    {CATEGORIES.map((c) => <option value={c.slug}>{c.name}</option>)}
+  </datalist>
+
+  {pending.length === 0 && <p class="mt-6 rounded-2xl border border-stone-200 bg-white p-5 text-stone-600">No hay escaneos pendientes. 🎉</p>}
+
+  <div class="mt-4 space-y-4">
+    {
+      pending.map((p) => (
+        <form class="moderation-card rounded-3xl border border-stone-200 bg-white p-4 sm:p-5" data-ean={p.ean}>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p class="text-xs text-stone-500 tabular-nums">
+              EAN {p.ean} · {p.scanConsensusCount} escaneo(s) · {p.updatedAt}
+            </p>
+            <p class="preview text-sm font-semibold" />
+          </div>
+
+          <div class="mt-3 grid gap-3 sm:grid-cols-3">
+            <label class="block">
+              <span class="text-xs font-medium text-stone-600">Nombre</span>
+              <input name="name" required value={p.name} class={inputClass} />
+            </label>
+            <label class="block">
+              <span class="text-xs font-medium text-stone-600">Marca</span>
+              <input name="brand" required value={p.brand} class={inputClass} />
+            </label>
+            <label class="block">
+              <span class="text-xs font-medium text-stone-600">Categoría (slug)</span>
+              <input name="categorySlug" required value={p.categorySlug} list="category-options" class={inputClass} />
+            </label>
+          </div>
+
+          <label class="mt-3 block">
+            <span class="text-xs font-medium text-stone-600">Ingredientes</span>
+            <textarea name="ingredientsRaw" required rows="3" class={inputClass}>{p.ingredientsRaw}</textarea>
+          </label>
+
+          <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-6">
+            {nutrientFields.map((f) => (
+              <label class="block">
+                <span class="text-xs font-medium text-stone-600">{f.label}</span>
+                <input name={f.key} type="number" step="0.1" min="0" required value={p.nutrients[f.key]} class={inputClass} />
+              </label>
+            ))}
+          </div>
+
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <label class="flex items-center gap-2 text-sm">
+              <input name="isLiquid" type="checkbox" checked={p.isLiquid} class="h-4 w-4 rounded accent-emerald-600" />
+              Líquido (por 100 ml)
+            </label>
+            <div class="flex gap-2">
+              <button type="button" data-action="reject" class="rounded-xl border border-red-300 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">
+                Rechazar
+              </button>
+              <button type="submit" data-action="approve" class="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                Aprobar y publicar
+              </button>
+            </div>
+          </div>
+        </form>
+      ))
+    }
+  </div>
+</MainLayout>
+
+<script>
+  import { evaluateProduct, type Nutrients } from '../../lib/scorer';
+
+  const SECRET_KEY = 'sanopasillo:admin-secret';
+  const secretInput = document.getElementById('admin-secret') as HTMLInputElement;
+  const statusEl = document.getElementById('admin-status') as HTMLParagraphElement;
+  const NUTRIENT_KEYS = ['calories', 'sugars', 'saturatedFat', 'sodium', 'protein', 'fiber'] as const;
+
+  try {
+    secretInput.value = sessionStorage.getItem(SECRET_KEY) ?? '';
+  } catch {
+    // sessionStorage puede no estar disponible.
+  }
+  secretInput.addEventListener('change', () => {
+    try {
+      sessionStorage.setItem(SECRET_KEY, secretInput.value);
+    } catch {}
+  });
+
+  const setStatus = (text: string, ok: boolean) => {
+    statusEl.textContent = text;
+    statusEl.className = `mt-3 min-h-5 text-sm ${ok ? 'text-emerald-700' : 'text-red-700'}`;
+  };
+
+  function readForm(form: HTMLFormElement) {
+    const data = new FormData(form);
+    const nutrients = Object.fromEntries(
+      NUTRIENT_KEYS.map((k) => [k, Number.parseFloat(String(data.get(k) ?? '0')) || 0]),
+    ) as unknown as Nutrients;
+    return {
+      name: String(data.get('name') ?? ''),
+      brand: String(data.get('brand') ?? ''),
+      categorySlug: String(data.get('categorySlug') ?? ''),
+      ingredientsRaw: String(data.get('ingredientsRaw') ?? ''),
+      isLiquid: data.get('isLiquid') === 'on',
+      nutrients,
+    };
+  }
+
+  /** Vista previa del puntaje con el mismo algoritmo del servidor, mientras se edita. */
+  function updatePreview(form: HTMLFormElement) {
+    const ev = evaluateProduct(readForm(form));
+    const preview = form.querySelector('.preview') as HTMLElement;
+    preview.textContent = `${ev.finalScore}/100 · NOVA ${ev.novaGroup} · ${ev.minsalSeals.length} sellos · ${ev.additives.length} aditivos${ev.isFakeHealthy ? ' · FALSO SIN SELLOS' : ''}`;
+    preview.className = `preview text-sm font-semibold ${ev.finalScore >= 75 ? 'text-emerald-700' : ev.finalScore >= 50 ? 'text-amber-700' : 'text-red-700'}`;
+  }
+
+  async function moderate(form: HTMLFormElement, action: 'approve' | 'reject') {
+    const secret = secretInput.value.trim();
+    if (!secret) {
+      setStatus('Ingresa la clave de administración.', false);
+      secretInput.focus();
+      return;
+    }
+    if (action === 'reject' && !confirm('¿Eliminar este escaneo pendiente?')) return;
+
+    const buttons = form.querySelectorAll('button');
+    buttons.forEach((b) => (b.disabled = true));
+    try {
+      const res = await fetch('/api/admin/moderate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+        body: JSON.stringify({ ean: form.dataset.ean, action, product: action === 'approve' ? readForm(form) : undefined }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; product?: { slug: string } };
+      if (!res.ok) {
+        setStatus(data.error ?? `Error ${res.status}`, false);
+        return;
+      }
+      setStatus(action === 'approve' ? `Publicado en /producto/${data.product?.slug}` : 'Escaneo eliminado.', true);
+      form.remove();
+    } catch {
+      setStatus('Error de red.', false);
+    } finally {
+      buttons.forEach((b) => (b.disabled = false));
+    }
+  }
+
+  // --- Reportes ----------------------------------------------------------------
+  const reportsList = document.getElementById('reports-list') as HTMLUListElement;
+  const KIND_LABEL: Record<string, string> = { error: 'Error en ficha', marca: 'Marca (réplica)', empresa: 'Empresa / API' };
+  const esc = (s: unknown) =>
+    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+  async function loadReports() {
+    const secret = secretInput.value.trim();
+    if (!secret) return setStatus('Ingresa la clave de administración.', false);
+    const res = await fetch('/api/admin/reports', { headers: { 'x-admin-secret': secret } });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      reports?: { id: number; kind: string; ean: string | null; name: string | null; email: string | null; organization: string | null; message: string; createdAt: string }[];
+    };
+    if (!res.ok || !data.reports) return setStatus(data.error ?? `Error ${res.status}`, false);
+    reportsList.innerHTML = data.reports.length
+      ? data.reports
+          .map(
+            (r) => `<li class="rounded-2xl border border-stone-200 p-3" data-report="${r.id}">
+              <p class="font-semibold">${esc(KIND_LABEL[r.kind] ?? r.kind)}${r.ean ? ` · EAN ${esc(r.ean)}` : ''} <span class="font-normal text-stone-500">· ${esc(r.createdAt)}</span></p>
+              <p class="text-stone-600">${esc([r.name, r.organization, r.email].filter(Boolean).join(' · '))}</p>
+              <p class="mt-1 whitespace-pre-line">${esc(r.message)}</p>
+              <button type="button" class="mt-2 rounded-lg border border-stone-300 px-2.5 py-1 text-xs font-semibold">Marcar revisado</button>
+            </li>`,
+          )
+          .join('')
+      : '<li class="text-stone-500">No hay reportes nuevos.</li>';
+  }
+
+  document.getElementById('reports-load')!.addEventListener('click', () => void loadReports());
+  reportsList.addEventListener('click', async (event) => {
+    const li = (event.target as HTMLElement).closest<HTMLElement>('button')?.closest<HTMLElement>('[data-report]');
+    if (!li) return;
+    const res = await fetch('/api/admin/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-secret': secretInput.value.trim() },
+      body: JSON.stringify({ id: Number(li.dataset.report) }),
+    });
+    if (res.ok) li.remove();
+    else setStatus(`Error ${res.status}`, false);
+  });
+
+  for (const form of document.querySelectorAll<HTMLFormElement>('.moderation-card')) {
+    updatePreview(form);
+    form.addEventListener('input', () => updatePreview(form));
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void moderate(form, 'approve');
+    });
+    form.querySelector('[data-action="reject"]')?.addEventListener('click', () => void moderate(form, 'reject'));
+  }
+</script>

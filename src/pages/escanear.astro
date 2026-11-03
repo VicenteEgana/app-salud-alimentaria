@@ -1,0 +1,16 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import SmartScanner from '../components/SmartScanner.astro';
+---
+
+<MainLayout
+  title="Escáner de pasillo: evalúa cualquier producto con su código de barras"
+  description="Apunta la cámara al código de barras y conoce al instante los sellos MINSAL, el nivel de ultraprocesamiento y los aditivos de riesgo de cualquier producto del supermercado."
+  canonicalPath="/escanear"
+>
+  <div class="mx-auto max-w-lg">
+    <h1 class="text-2xl font-extrabold">Escáner de pasillo</h1>
+    <p class="mb-4 text-sm text-stone-600">Escanea el código de barras y mira lo que los sellos no te cuentan.</p>
+    <SmartScanner />
+  </div>
+</MainLayout>

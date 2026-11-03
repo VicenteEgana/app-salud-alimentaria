@@ -1,0 +1,67 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { METHODOLOGY_VERSION } from '../lib/scorer';
+import { SITE_NAME, SITE_URL, href } from '../lib/site';
+
+export const prerender = true;
+
+const example = `curl -H "x-api-key: sp_…" ${SITE_URL}/api/v1/products/7802920010588`;
+---
+
+<MainLayout
+  title="Empresas: datos y API de evaluación nutricional"
+  description="API con la evaluación de productos de supermercado en Chile: sellos MINSAL, NOVA, aditivos de riesgo, falsos sin sellos y precios. Para retail, foodtech y salud."
+  canonicalPath="/empresas"
+>
+  <article class="mx-auto max-w-3xl space-y-8">
+    <header>
+      <h1 class="text-3xl font-extrabold">Datos para empresas</h1>
+      <p class="mt-2 text-stone-600">
+        La misma evaluación que ve cualquier persona en {SITE_NAME}, disponible por API para supermercados, apps de salud,
+        aseguradoras e investigación.
+      </p>
+    </header>
+
+    <section class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {
+        [
+          { t: 'Retail y e-commerce', d: 'Puntaje, alertas por perfil y alternativas para enriquecer fichas y buscadores.' },
+          { t: 'Apps de salud', d: 'Clasificación NOVA, aditivos de riesgo y edulcorantes por EAN en una sola llamada.' },
+          { t: 'Reformulación', d: 'Historial de cambios de receta por categoría para equipos de producto e investigación.' },
+        ].map((c) => (
+          <div class="rounded-2xl border border-stone-200 bg-white p-4">
+            <h2 class="font-semibold">{c.t}</h2>
+            <p class="mt-1 text-sm text-stone-600">{c.d}</p>
+          </div>
+        ))
+      }
+    </section>
+
+    <section>
+      <h2 class="text-xl font-bold">API v1</h2>
+      <ul class="mt-2 space-y-1 text-sm">
+        <li><code class="rounded bg-stone-100 px-1.5 py-0.5">GET /api/v1/products/{'{ean}'}</code> — evaluación completa, ingredientes y precios</li>
+        <li><code class="rounded bg-stone-100 px-1.5 py-0.5">GET /api/v1/categories/{'{slug}'}</code> — ranking verificado de una categoría</li>
+      </ul>
+      <pre class="mt-3 overflow-x-auto rounded-2xl bg-stone-900 p-4 text-xs text-stone-100"><code>{example}</code></pre>
+      <p class="mt-2 text-sm text-stone-600">
+        Autenticación con el header <code>x-api-key</code> y cuota mensual por cliente. Cada respuesta incluye la versión del
+        método (actual: {METHODOLOGY_VERSION}) y la fuente y fecha de cada dato.
+      </p>
+    </section>
+
+    <section class="rounded-3xl bg-emerald-50 p-5">
+      <h2 class="text-xl font-bold text-emerald-900">Política de independencia</h2>
+      <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-emerald-950">
+        <li>Ninguna empresa puede pagar por un mejor puntaje, por aparecer antes en un ranking ni por quitar una advertencia.</li>
+        <li>Los clientes de la API reciben exactamente los mismos datos y el mismo método público.</li>
+        <li>Las marcas pueden pedir una revisión con la etiqueta vigente, como cualquier persona.</li>
+      </ul>
+      <a href={href('/metodologia')} class="mt-3 inline-block text-sm font-semibold text-emerald-800 underline">Ver metodología</a>
+    </section>
+
+    <a href={href('/reportar?tipo=empresa')} class="flex items-center justify-center rounded-2xl bg-stone-900 px-4 py-3 font-semibold text-white">
+      Solicitar acceso a la API
+    </a>
+  </article>
+</MainLayout>

@@ -1,0 +1,210 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import ProductCard from '../components/ProductCard.astro';
+import ScoreCircle from '../components/ScoreCircle.astro';
+import { CATEGORIES, categoryName } from '../lib/categories';
+import { getCategoryProducts, getCategorySummaries, getFakeHealthy, type CategorySummary, type Product } from '../lib/db';
+import { IS_APP, SITE_NAME, SITE_TAGLINE, SITE_URL, href } from '../lib/site';
+import { versusPath } from '../lib/versus';
+
+// La app (build estático) no tiene base de datos: muestra buscador, escáner y categorías.
+let categories: CategorySummary[] = CATEGORIES.map((c) => ({ categorySlug: c.slug, total: 0, fakeHealthy: 0, bestScore: 0 }));
+let fakeHealthy: Product[] = [];
+let featured: { best: Product; trap: Product }[] = [];
+
+if (!IS_APP) {
+  const db = Astro.locals.runtime.env.DB;
+  const [summaries, fakes] = await Promise.all([getCategorySummaries(db), getFakeHealthy(db, 6)]);
+  if (summaries.length) categories = summaries;
+  fakeHealthy = fakes;
+
+  // Comparativa destacada por categoría: el mejor evaluado vs. el peor "falso sin sellos".
+  const perCategory = await Promise.all(summaries.slice(0, 6).map((s) => getCategoryProducts(db, s.categorySlug)));
+  featured = perCategory.flatMap((products) => {
+    const best = products[0];
+    const trap = products.filter((p) => p.isFakeHealthy && p.ean !== best?.ean).at(-1);
+    return best && trap ? [{ best, trap }] : [];
+  });
+  Astro.response.headers.set('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
+}
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: SITE_NAME,
+    url: SITE_URL,
+    inLanguage: 'es-CL',
+    description: SITE_TAGLINE,
+  },
+];
+---
+
+<MainLayout
+  title={`${SITE_NAME}: ¿sano o solo sin sellos? Compara productos de supermercado en Chile`}
+  description="Escanea el código de barras y descubre la calidad real de lo que compras: sellos MINSAL, ultraprocesamiento NOVA y aditivos de riesgo. Desenmascaramos a los falsos saludables."
+  canonicalPath="/"
+  jsonLd={jsonLd}
+>
+  <!-- Hero + buscador -->
+  <section class="rounded-3xl bg-gradient-to-br from-emerald-700 to-emerald-900 px-5 py-8 text-white sm:px-10 sm:py-12">
+    <p class="text-sm font-semibold tracking-wide text-emerald-200 uppercase">{SITE_TAGLINE}</p>
+    <h1 class="mt-2 max-w-2xl text-3xl leading-tight font-extrabold sm:text-5xl">¿Sano de verdad o solo sin sellos?</h1>
+    <p class="mt-3 max-w-xl text-emerald-50/90">
+      Muchos productos "cero sellos" esconden edulcorantes, espesantes y aditivos industriales. Escanéalos y mira su
+      radiografía completa.
+    </p>
+
+    <form id="home-search" class="relative mt-6 max-w-xl" role="search" autocomplete="off">
+      <label for="home-search-input" class="sr-only">Buscar producto o código de barras</label>
+      <input
+        id="home-search-input"
+        type="search"
+        placeholder="Busca un producto, marca o código EAN"
+        class="w-full rounded-2xl border-0 bg-white px-4 py-3.5 pr-28 text-base text-stone-900 shadow-lg placeholder:text-stone-400 focus:ring-4 focus:ring-emerald-300 focus:outline-none"
+      />
+      <a
+        href={href('/escanear')}
+        class="absolute top-1.5 right-1.5 bottom-1.5 flex items-center rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white"
+      >
+        Escanear
+      </a>
+      <div id="home-search-results" hidden class="absolute inset-x-0 top-full z-20 mt-2 max-h-96 overflow-y-auto rounded-2xl bg-white p-1 text-stone-900 shadow-xl"></div>
+    </form>
+  </section>
+
+  <!-- Cómo evaluamos -->
+  <section class="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    {
+      [
+        { pct: '50 %', title: 'Calidad nutricional', body: 'Límites de la Ley 20.606 por 100 g/ml, alertas "casi sello", proteína y fibra.' },
+        { pct: '20 %', title: 'Ultraprocesamiento', body: 'Escala NOVA: de alimento natural (1) a ultraprocesado industrial (4).' },
+        { pct: '30 %', title: 'Aditivos de riesgo', body: 'Nitritos, colorantes azoicos, carragenina, CMC y edulcorantes "trampa".' },
+      ].map((p) => (
+        <div class="rounded-2xl border border-stone-200 bg-white p-4">
+          <p class="text-2xl font-extrabold text-emerald-700">{p.pct}</p>
+          <h2 class="font-semibold">{p.title}</h2>
+          <p class="mt-1 text-sm text-stone-600">{p.body}</p>
+        </div>
+      ))
+    }
+  </section>
+
+  <!-- Rankings -->
+  <section id="rankings" class="mt-10 scroll-mt-4">
+    <h2 class="text-xl font-bold">Rankings por categoría</h2>
+    <p class="text-sm text-stone-600">Los más sanos y las trampas del pasillo, con datos verificados.</p>
+    <ul class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {
+        categories.map((c) => (
+          <li>
+            <a
+              href={href(`/ranking/${c.categorySlug}`)}
+              class="flex h-full items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white p-4 hover:border-emerald-300"
+            >
+              <div>
+                <h3 class="font-semibold">{categoryName(c.categorySlug)}</h3>
+                {c.total > 0 && (
+                  <p class="text-xs text-stone-500">
+                    {c.total} productos · {c.fakeHealthy} falsos sin sellos
+                  </p>
+                )}
+              </div>
+              {c.total > 0 && <ScoreCircle score={c.bestScore} size="sm" />}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  {
+    fakeHealthy.length > 0 && (
+      <section class="mt-10">
+        <h2 class="text-xl font-bold">La trampa del pasillo</h2>
+        <p class="text-sm text-stone-600">0 sellos MINSAL, pero ultraprocesados y con aditivos o edulcorantes.</p>
+        <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {fakeHealthy.map((p) => (
+            <ProductCard product={p} />
+          ))}
+        </div>
+      </section>
+    )
+  }
+
+  {
+    featured.length > 0 && (
+      <section class="mt-10">
+        <h2 class="text-xl font-bold">Comparativas destacadas</h2>
+        <ul class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {featured.map(({ best, trap }) => (
+            <li>
+              <a
+                href={href(versusPath(best.slug, trap.slug))}
+                class="flex items-center gap-3 rounded-2xl border border-stone-200 bg-white p-4 hover:border-emerald-300"
+              >
+                <ScoreCircle score={best.finalScore} size="sm" />
+                <span class="min-w-0 flex-1 text-sm font-semibold">
+                  <span class="line-clamp-1">{best.name}</span>
+                  <span class="text-xs font-bold text-stone-400">VS</span>
+                  <span class="line-clamp-1">{trap.name}</span>
+                </span>
+                <ScoreCircle score={trap.finalScore} size="sm" />
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+</MainLayout>
+
+<script>
+  import type { Product } from '../lib/db';
+  import { productListItemHtml } from '../lib/product-html';
+  import { API_BASE, href } from '../lib/site';
+  import { escapeHtml, isValidEan } from '../lib/text';
+
+  const form = document.getElementById('home-search') as HTMLFormElement;
+  const input = document.getElementById('home-search-input') as HTMLInputElement;
+  const results = document.getElementById('home-search-results') as HTMLDivElement;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let controller: AbortController | undefined;
+
+  async function search(q: string) {
+    controller?.abort();
+    controller = new AbortController();
+    try {
+      const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal });
+      const { products } = (await res.json()) as { products: Product[] };
+      results.innerHTML = products.length
+        ? products.map(productListItemHtml).join('')
+        : `<p class="px-3 py-4 text-sm text-stone-500">Sin resultados para "${escapeHtml(q)}". ¿Lo tienes a mano? Escanéalo.</p>`;
+      results.hidden = false;
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') results.hidden = true;
+    }
+  }
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2) {
+      results.hidden = true;
+      return;
+    }
+    timer = setTimeout(() => void search(q), 220);
+  });
+
+  // Enter con un EAN completo → directo al escáner.
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const q = input.value.trim().replace(/\s/g, '');
+    if (isValidEan(q)) location.href = `${href('/escanear')}?ean=${q}`;
+    else if (q.length >= 2) void search(q);
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!form.contains(event.target as Node)) results.hidden = true;
+  });
+</script>

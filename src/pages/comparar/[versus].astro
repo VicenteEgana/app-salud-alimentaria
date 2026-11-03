@@ -1,0 +1,62 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import VersusComparator from '../../components/VersusComparator.astro';
+import { categoryName } from '../../lib/categories';
+import { getProductBySlug } from '../../lib/db';
+import { VERSUS_SEPARATOR, canonicalPair, versusPath } from '../../lib/versus';
+
+const parts = (Astro.params.versus ?? '').split(VERSUS_SEPARATOR);
+if (parts.length !== 2 || !parts[0] || !parts[1] || parts[0] === parts[1]) return Astro.rewrite('/404');
+
+// URL canónica: slugs en orden alfabético (evita contenido duplicado a-vs-b / b-vs-a).
+const [canonicalA, canonicalB] = canonicalPair(parts[0], parts[1]);
+if (canonicalA !== parts[0]) return Astro.redirect('/comparar/' + canonicalA + VERSUS_SEPARATOR + canonicalB, 301);
+
+const db = Astro.locals.runtime.env.DB;
+const [a, b] = await Promise.all([getProductBySlug(db, canonicalA), getProductBySlug(db, canonicalB)]);
+if (!a || !b) return Astro.rewrite('/404');
+
+Astro.response.headers.set('Cache-Control', 'public, s-maxage=86400, stale-while-revalidate=604800');
+
+const [winner, loser] = a.finalScore >= b.finalScore ? [a, b] : [b, a];
+const tie = a.finalScore === b.finalScore;
+const title = `${a.name} vs ${b.name}: ¿cuál es más sano?`;
+const description = tie
+  ? `${a.name} y ${b.name} empatan con ${a.finalScore}/100. Compara sellos MINSAL, NOVA, aditivos y tabla nutricional por 100 g.`
+  : `${winner.name} (${winner.finalScore}/100) le gana a ${loser.name} (${loser.finalScore}/100). Compara sellos MINSAL, NOVA, aditivos y tabla nutricional por 100 g.`;
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: [
+      {
+        '@type': 'Question',
+        name: `¿Qué es más sano, ${a.name} o ${b.name}?`,
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: tie
+            ? `Empatan con ${a.finalScore}/100 puntos en nuestra evaluación.`
+            : `${winner.name} obtiene ${winner.finalScore}/100 frente a ${loser.finalScore}/100 de ${loser.name}.`,
+        },
+      },
+    ],
+  },
+];
+---
+
+<MainLayout title={title} description={description} canonicalPath={versusPath(a.slug, b.slug)} noindex={!a.verified || !b.verified} jsonLd={jsonLd}>
+  <nav class="mb-3 text-xs text-stone-500" aria-label="Migas de pan">
+    <a href="/" class="hover:underline">Inicio</a> ›
+    <a href={`/ranking/${a.categorySlug}`} class="hover:underline">{categoryName(a.categorySlug)}</a> › Comparar
+  </nav>
+  <h1 class="mb-1 text-2xl leading-tight font-extrabold">{a.name} <span class="text-stone-400">vs</span> {b.name}</h1>
+  <p class="mb-5 text-stone-600">
+    {
+      tie
+        ? 'Empate técnico: revisa fila por fila dónde gana cada uno.'
+        : `${winner.name} es la mejor opción por ${winner.finalScore - loser.finalScore} puntos.`
+    }
+  </p>
+  <VersusComparator a={a} b={b} />
+</MainLayout>

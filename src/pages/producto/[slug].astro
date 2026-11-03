@@ -1,0 +1,479 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import MinsalSeals from '../../components/MinsalSeals.astro';
+import ProductCard from '../../components/ProductCard.astro';
+import ScoreCircle from '../../components/ScoreCircle.astro';
+import { categoryName } from '../../lib/categories';
+import {
+  DATA_SOURCE_LABELS,
+  getHealthierAlternatives,
+  getOffers,
+  getProductBySlug,
+  getProductHistory,
+} from '../../lib/db';
+import { describeChange } from '../../lib/history';
+import { ADDITIVE_LEVEL_LABELS, MINSAL_LIMITS, NOVA_LABELS, getAdditiveDefinition, type Nutrients } from '../../lib/scorer';
+import { SITE_URL } from '../../lib/site';
+import { cartUrl } from '../../lib/stores/cencosud';
+import { KIDS_WARNING_TEXT, SWEETENER_ADI } from '../../lib/sweeteners';
+import { formatNumber } from '../../lib/text';
+import { ADDITIVE_LEVEL_STYLE, NOVA_BADGE, clp, formatDate, perUnit, tierStyle } from '../../lib/ui';
+import { versusPath } from '../../lib/versus';
+
+const db = Astro.locals.runtime.env.DB;
+const product = await getProductBySlug(db, Astro.params.slug ?? '');
+if (!product) return Astro.rewrite('/404');
+
+const [alternatives, history] = await Promise.all([
+  product.verified ? getHealthierAlternatives(db, product) : Promise.resolve([]),
+  getProductHistory(db, product.ean, 5),
+]);
+const offersByEan = await getOffers(db, [product.ean, ...alternatives.map((a) => a.ean)]);
+const offers = offersByEan.get(product.ean) ?? [];
+const changes = history.map((h) => ({ entry: h, lines: describeChange(h) })).filter((c) => c.lines.length > 0);
+
+const ev = product.evaluation;
+const tier = tierStyle(product.finalScore);
+const limits = product.isLiquid ? MINSAL_LIMITS.liquid : MINSAL_LIMITS.solid;
+const unitBasis = product.isLiquid ? '100 ml' : '100 g';
+const sweetenerRows = ev.sweeteners.map((s) => ({ ...s, def: getAdditiveDefinition(s.additiveId), adi: SWEETENER_ADI[s.additiveId] }));
+
+if (product.verified) {
+  Astro.response.headers.set('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
+}
+
+const nutrientRows: { key: keyof Nutrients; label: string; unit: string; limit?: number }[] = [
+  { key: 'calories', label: 'Energía', unit: 'kcal', limit: limits.calories },
+  { key: 'sugars', label: 'Azúcares totales', unit: 'g', limit: limits.sugars },
+  { key: 'saturatedFat', label: 'Grasas saturadas', unit: 'g', limit: limits.saturatedFat },
+  { key: 'sodium', label: 'Sodio', unit: 'mg', limit: limits.sodium },
+  { key: 'protein', label: 'Proteínas', unit: 'g' },
+  { key: 'fiber', label: 'Fibra dietética', unit: 'g' },
+];
+
+const pillars = [
+  { label: 'Calidad nutricional', weight: '50 %', score: ev.nutritionScore },
+  { label: 'Procesamiento (NOVA)', weight: '20 %', score: ev.novaScore },
+  { label: 'Aditivos', weight: '30 %', score: ev.additivesScore },
+];
+
+const title = `${product.name} ${product.brand}: ¿es saludable? Puntaje ${product.finalScore}/100`;
+const description = product.isFakeHealthy
+  ? `${product.name} no tiene sellos MINSAL, pero es ultraprocesado y contiene ${ev.additives.map((a) => a.name.toLowerCase()).join(', ')}. Mira su radiografía y alternativas.`
+  : `Radiografía de ${product.name} (${product.brand}): ${ev.minsalSeals.length} sellos MINSAL, NOVA ${ev.novaGroup} y ${ev.additives.length} aditivos de riesgo. Puntaje ${product.finalScore}/100.`;
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Inicio', item: SITE_URL },
+      { '@type': 'ListItem', position: 2, name: categoryName(product.categorySlug), item: `${SITE_URL}/ranking/${product.categorySlug}` },
+      { '@type': 'ListItem', position: 3, name: product.name, item: `${SITE_URL}/producto/${product.slug}` },
+    ],
+  },
+];
+
+// Datos que usan los scripts del cliente (perfiles, lista, modo niños).
+const clientData = JSON.stringify({ product, offers }).replace(/</g, '\\u003c');
+---
+
+<MainLayout title={title} description={description} noindex={!product.verified} jsonLd={product.verified ? jsonLd : []} ogImage={product.imageUrl}>
+  <nav class="mb-3 text-xs text-stone-500" aria-label="Migas de pan">
+    <a href="/" class="hover:underline">Inicio</a> ›
+    <a href={`/ranking/${product.categorySlug}`} class="hover:underline">{categoryName(product.categorySlug)}</a>
+  </nav>
+
+  {
+    !product.verified && (
+      <p class="mb-4 rounded-2xl border border-stone-300 bg-stone-100 px-4 py-3 text-sm text-stone-700">
+        Datos leídos por IA desde la foto de un usuario. Están pendientes de verificación y pueden tener errores.
+      </p>
+    )
+  }
+
+  <article class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div class="min-w-0 space-y-6">
+      <!-- Cabecera -->
+      <header class="rounded-3xl border border-stone-200 bg-white p-5">
+        <div class="flex items-start gap-4">
+          {product.imageUrl && <img src={product.imageUrl} alt={product.name} class="h-24 w-24 shrink-0 rounded-2xl bg-stone-100 object-contain" />}
+          <div class="min-w-0 flex-1">
+            <p class="text-xs font-medium tracking-wide text-stone-500 uppercase">{product.brand}</p>
+            <h1 class="text-2xl leading-tight font-extrabold">{product.name}</h1>
+            <p class="mt-1 text-xs text-stone-500 tabular-nums">EAN {product.ean}</p>
+            <p class:list={['mt-2 font-semibold', tier.text]}>{tier.label}</p>
+          </div>
+          <ScoreCircle score={product.finalScore} size="lg" />
+        </div>
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          <button
+            id="save-button"
+            type="button"
+            class="rounded-xl border border-stone-300 px-3 py-2 text-sm font-semibold hover:bg-stone-50"
+          >
+            + Mi lista
+          </button>
+          <a href={`/reportar?tipo=error&ean=${product.ean}`} class="rounded-xl px-3 py-2 text-sm text-stone-600 hover:bg-stone-100">
+            Reportar un error
+          </a>
+          <a href={`/reportar?tipo=marca&ean=${product.ean}`} class="rounded-xl px-3 py-2 text-sm text-stone-600 hover:bg-stone-100">
+            ¿Eres la marca? Solicita revisión
+          </a>
+        </div>
+        <p class="mt-3 text-xs text-stone-500">
+          Fuente: {DATA_SOURCE_LABELS[product.dataSource]} · actualizado el {formatDate(product.updatedAt)} ·
+          <a href="/metodologia" class="underline">cómo calculamos</a>
+        </p>
+      </header>
+
+      {
+        product.isFakeHealthy && (
+          <div class="rounded-3xl bg-violet-600 p-5 text-white">
+            <p class="text-lg font-bold">Falso sin sellos</p>
+            <p class="mt-1 text-sm text-violet-100">
+              No tiene ningún sello negro del MINSAL, pero es un ultraprocesado (NOVA 4) que contiene
+              {ev.additives.length === 1 ? ' un aditivo o edulcorante' : ` ${ev.additives.length} aditivos o edulcorantes`} que la ley
+              no obliga a advertir en el frente del envase.
+              <a href="/metodologia#falso-sin-sellos" class="underline">Ver definición</a>.
+            </p>
+          </div>
+        )
+      }
+
+      {
+        ev.hardCapReason && (
+          <p class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
+            {ev.hardCapReason} (puntaje sin tope: {ev.baseScore}).
+          </p>
+        )
+      }
+
+      <!-- Perfiles personales (se evalúan en el dispositivo) -->
+      <section class="rounded-3xl border border-stone-200 bg-white p-5">
+        <h2 class="mb-3 font-bold">Para tu perfil</h2>
+        <div id="profile-checks"><p class="text-sm text-stone-500">Cargando…</p></div>
+      </section>
+
+      <!-- Sellos y NOVA -->
+      <section class="rounded-3xl border border-stone-200 bg-white p-5">
+        <h2 class="font-bold">Sellos MINSAL y procesamiento</h2>
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <MinsalSeals seals={ev.minsalSeals} size="md" showEmpty />
+          <span class:list={['rounded-full px-3 py-1 text-sm font-semibold', NOVA_BADGE[ev.novaGroup]]}>
+            NOVA {ev.novaGroup} · {NOVA_LABELS[ev.novaGroup]}
+          </span>
+        </div>
+        {
+          ev.borderlineWarnings.length > 0 && (
+            <ul class="mt-3 space-y-1">
+              {ev.borderlineWarnings.map((w) => (
+                <li class="text-sm font-medium text-amber-700">⚠ {w}: le falta muy poco para llevar sello.</li>
+              ))}
+            </ul>
+          )
+        }
+        {
+          ev.industrialMarkers.length > 0 && (
+            <p class="mt-3 text-sm text-stone-600">
+              Ingredientes industriales detectados: <span class="font-medium text-stone-800">{ev.industrialMarkers.join(', ')}</span>.
+            </p>
+          )
+        }
+        <p class="mt-2 text-xs text-stone-500">{ev.ingredientCount} ingredientes de primer nivel.</p>
+      </section>
+
+      <!-- Aditivos -->
+      <section class="rounded-3xl border border-stone-200 bg-white p-5">
+        <h2 class="font-bold">Aditivos de riesgo</h2>
+        {
+          ev.additives.length === 0 ? (
+            <p class="mt-2 text-sm text-emerald-800">No contiene aditivos de nuestra lista de riesgo.</p>
+          ) : (
+            <ul class="mt-3 grid gap-2 sm:grid-cols-2">
+              {[...ev.additives]
+                .sort((a, b) => b.level - a.level)
+                .map((a) => {
+                  const def = getAdditiveDefinition(a.id);
+                  return (
+                    <li class:list={['rounded-2xl border p-3', ADDITIVE_LEVEL_STYLE[a.level]]}>
+                      <p class="font-semibold">{a.name}</p>
+                      <p class="text-xs font-medium opacity-80">
+                        {ADDITIVE_LEVEL_LABELS[a.level]}
+                        {a.code && ` · ${a.code}`} · −{a.penalty} pts
+                      </p>
+                      <p class="mt-1 text-sm opacity-90">{def?.concern ?? a.concern}</p>
+                      {def?.sources.length ? (
+                        <ul class="mt-1.5 space-y-0.5 text-xs">
+                          {def.sources.map((s) => (
+                            <li>
+                              <a href={s.url} target="_blank" rel="noopener" class="underline opacity-80 hover:opacity-100">
+                                {s.label}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </li>
+                  );
+                })}
+            </ul>
+          )
+        }
+        {ev.multiSweetenerPenalty && <p class="mt-3 text-sm font-medium text-violet-700">Mezcla de 2 o más edulcorantes: −10 pts adicionales.</p>}
+      </section>
+
+      <!-- Modo niños -->
+      {
+        ev.sweeteners.length > 0 && (
+          <section id="modo-ninos" class="rounded-3xl border border-sky-200 bg-sky-50 p-5 text-sky-950">
+            <h2 class="font-bold">Modo niños: edulcorantes</h2>
+            {ev.kidsSweetenerWarning && (
+              <p class="mt-2 text-sm">
+                Le aplicaría la leyenda que el MINSAL propone para el frente del envase: <strong>"{KIDS_WARNING_TEXT}"</strong>
+                (art. 120 ter, en trámite a la fecha).
+              </p>
+            )}
+            <form id="kids-form" class="mt-3 flex flex-wrap items-end gap-3 text-sm">
+              <label class="block">
+                <span class="text-xs font-medium">Peso del niño (kg)</span>
+                <input name="weight" type="number" min="5" max="80" step="1" value="18" class="mt-1 w-24 rounded-xl border border-sky-200 bg-white px-3 py-2" />
+              </label>
+              <label class="block">
+                <span class="text-xs font-medium">Cantidad ({product.isLiquid ? 'ml' : 'g'})</span>
+                <input
+                  name="grams"
+                  type="number"
+                  min="1"
+                  max="2000"
+                  step="1"
+                  value={product.portionSize ?? 100}
+                  class="mt-1 w-28 rounded-xl border border-sky-200 bg-white px-3 py-2"
+                />
+              </label>
+              {product.portionText && <span class="pb-2 text-xs opacity-75">Porción declarada: {product.portionText}</span>}
+            </form>
+            <ul id="kids-results" class="mt-3 space-y-1.5 text-sm">
+              {sweetenerRows.map((s) => (
+                <li data-sweetener={s.additiveId}>
+                  <span class="font-semibold">{s.def?.name ?? s.additiveId}</span>:{' '}
+                  {s.mgPer100 === null && s.mgPerPortion === null
+                    ? 'el envase no declara la cantidad (o no la pudimos leer).'
+                    : !s.adi
+                      ? 'sin ingesta diaria admisible numérica.'
+                      : 'calculando…'}
+                </li>
+              ))}
+            </ul>
+            <p class="mt-3 text-xs opacity-75">
+              Estimación con la ingesta diaria admisible (IDA) de JECFA (FAO/OMS). Superar la IDA un día no implica daño, pero
+              indica una exposición alta.
+            </p>
+          </section>
+        )
+      }
+
+      <!-- Tabla nutricional -->
+      <section class="rounded-3xl border border-stone-200 bg-white p-5">
+        <h2 class="font-bold">Información nutricional por {unitBasis}</h2>
+        <p class="text-xs text-stone-500">Comparada con el límite legal de la Ley 20.606 para {product.isLiquid ? 'líquidos' : 'sólidos'}.</p>
+        <table class="mt-3 w-full text-sm">
+          <tbody>
+            {
+              nutrientRows.map((row) => {
+                const value = product.nutrients[row.key];
+                const ratio = row.limit ? Math.min(1, value / row.limit) : 0;
+                const color = !row.limit ? '' : value > row.limit ? 'bg-red-500' : ratio >= 0.9 ? 'bg-amber-500' : 'bg-emerald-500';
+                return (
+                  <tr class="border-b border-stone-100 last:border-0">
+                    <th scope="row" class="py-2 pr-3 text-left font-medium text-stone-700">{row.label}</th>
+                    <td class="w-1/2 py-2">
+                      {row.limit && (
+                        <div class="h-1.5 rounded-full bg-stone-100">
+                          <div class:list={['h-1.5 rounded-full', color]} style={`width: ${Math.round(ratio * 100)}%`} />
+                        </div>
+                      )}
+                    </td>
+                    <td class="py-2 pl-3 text-right font-semibold whitespace-nowrap tabular-nums">
+                      {formatNumber(value)} {row.unit}
+                      {row.limit && <span class="font-normal text-stone-400"> / {row.limit}</span>}
+                    </td>
+                  </tr>
+                );
+              })
+            }
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Ingredientes -->
+      <section class="rounded-3xl border border-stone-200 bg-white p-5">
+        <h2 class="font-bold">Ingredientes</h2>
+        <p class="mt-2 text-sm leading-relaxed text-stone-700">{product.ingredientsRaw}</p>
+        {
+          product.dietaryTags.length > 0 && (
+            <p class="mt-2 text-xs text-stone-600">Declarado por la tienda: {product.dietaryTags.join(', ')}</p>
+          )
+        }
+        {
+          ev.appliedExceptions.length > 0 && (
+            <ul class="mt-3 space-y-1">
+              {ev.appliedExceptions.map((x) => (
+                <li class="text-xs text-emerald-800">✓ {x}</li>
+              ))}
+            </ul>
+          )
+        }
+      </section>
+
+      <!-- Historial de reformulaciones -->
+      {
+        changes.length > 0 && (
+          <section class="rounded-3xl border border-stone-200 bg-white p-5">
+            <h2 class="font-bold">Cambios de receta detectados</h2>
+            <ol class="mt-3 space-y-3">
+              {changes.map(({ entry, lines }) => (
+                <li>
+                  <p class="text-xs text-stone-500">
+                    {formatDate(entry.changedAt)} · puntaje {entry.oldScore} → {entry.newScore}
+                  </p>
+                  <ul class="mt-1 space-y-0.5 text-sm">
+                    {lines.map((l) => (
+                      <li class:list={[l.kind === 'worse' ? 'text-red-700' : l.kind === 'better' ? 'text-emerald-700' : 'text-stone-700']}>
+                        {l.kind === 'worse' ? '▲' : l.kind === 'better' ? '▼' : '•'} {l.text}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )
+      }
+    </div>
+
+    <!-- Lateral: dónde comprar, desglose y alternativas -->
+    <aside class="min-w-0 space-y-6">
+      {
+        offers.length > 0 && (
+          <section class="rounded-3xl border border-stone-200 bg-white p-5">
+            <h2 class="mb-3 font-bold">Dónde comprar</h2>
+            <ul class="space-y-2">
+              {offers.map((o) => (
+                <li class="rounded-2xl border border-stone-200 p-3">
+                  <p class="text-sm font-semibold">
+                    {o.store === 'jumbo' ? 'Jumbo' : 'Santa Isabel'} · {clp(o.price)}
+                    {o.listPrice && o.listPrice > o.price && <span class="ml-1 text-xs font-normal text-stone-400 line-through">{clp(o.listPrice)}</span>}
+                  </p>
+                  <p class="text-xs text-stone-500">
+                    {perUnit(o.ppumPrice, o.ppumUnit)} · precio del {formatDate(o.updatedAt)}
+                    {!o.available && ' · sin stock'}
+                  </p>
+                  <div class="mt-2 flex gap-2">
+                    {o.available && o.store === 'jumbo' && (
+                      <a href={cartUrl('jumbo', [{ sku: o.sku }])} target="_blank" rel="noopener" class="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">
+                        Agregar al carro
+                      </a>
+                    )}
+                    <a href={o.url} target="_blank" rel="noopener" class="rounded-xl border border-stone-300 px-3 py-1.5 text-xs font-semibold">
+                      Ver en tienda
+                    </a>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )
+      }
+
+      <section class="rounded-3xl border border-stone-200 bg-white p-5">
+        <h2 class="font-bold">Cómo se calculó</h2>
+        <ul class="mt-3 space-y-3">
+          {
+            pillars.map((p) => (
+              <li>
+                <div class="flex justify-between text-sm">
+                  <span>
+                    {p.label} <span class="text-stone-400">({p.weight})</span>
+                  </span>
+                  <span class="font-semibold tabular-nums">{p.score}</span>
+                </div>
+                <div class="mt-1 h-2 rounded-full bg-stone-100">
+                  <div class="h-2 rounded-full" style={`width: ${p.score}%; background: ${tierStyle(p.score).color}`} />
+                </div>
+              </li>
+            ))
+          }
+        </ul>
+        <a href="/metodologia" class="mt-3 inline-block text-xs font-semibold text-emerald-700 hover:underline">Metodología completa →</a>
+      </section>
+
+      {
+        alternatives.length > 0 && (
+          <section>
+            <h2 class="mb-3 font-bold">Alternativas con mejor puntaje</h2>
+            <div class="space-y-2">
+              {alternatives.map((alt) => {
+                const altOffer = offersByEan.get(alt.ean)?.find((o) => o.available);
+                return (
+                  <div>
+                    <ProductCard product={alt} offer={altOffer} />
+                    <a href={versusPath(product.slug, alt.slug)} class="mt-1 block text-right text-xs font-semibold text-emerald-700 hover:underline">
+                      Comparar lado a lado →
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )
+      }
+    </aside>
+  </article>
+
+  <script id="product-data" type="application/json" set:html={clientData} />
+</MainLayout>
+
+<script>
+  import { isSaved, toggleSaved } from '../../lib/client-store';
+  import type { Offer, Product } from '../../lib/db';
+  import { profileChecksHtml, profileInput } from '../../lib/product-html';
+  import { loadProfiles } from '../../lib/profiles';
+  import { SWEETENER_ADI, estimateExposure } from '../../lib/sweeteners';
+  import { formatNumber } from '../../lib/text';
+
+  const { product, offers } = JSON.parse(document.getElementById('product-data')!.textContent!) as {
+    product: Product;
+    offers: Offer[];
+  };
+
+  // Perfiles
+  document.getElementById('profile-checks')!.innerHTML = profileChecksHtml(profileInput(product), loadProfiles());
+
+  // Mi lista
+  const saveButton = document.getElementById('save-button') as HTMLButtonElement;
+  const paintSave = (saved: boolean) => (saveButton.textContent = saved ? '✓ En mi lista' : '+ Mi lista');
+  paintSave(isSaved(product.ean));
+  saveButton.addEventListener('click', () => paintSave(toggleSaved(product, offers)));
+
+  // Modo niños
+  const kidsForm = document.getElementById('kids-form') as HTMLFormElement | null;
+  function updateKids() {
+    if (!kidsForm) return;
+    const data = new FormData(kidsForm);
+    const weight = Number(data.get('weight'));
+    const grams = Number(data.get('grams'));
+    for (const amount of product.evaluation.sweeteners) {
+      const li = document.querySelector<HTMLElement>(`[data-sweetener="${amount.additiveId}"]`);
+      const estimate = estimateExposure(amount, grams, weight, product.portionSize);
+      if (!li || !estimate || !SWEETENER_ADI[amount.additiveId]) continue;
+      const pct = Math.round(estimate.percentOfAdi);
+      const name = li.querySelector('span')?.textContent ?? amount.additiveId;
+      li.innerHTML = `<span class="font-semibold">${name}</span>: ${formatNumber(estimate.mgConsumed)} mg = <strong class="${
+        pct >= 100 ? 'text-red-700' : pct >= 50 ? 'text-amber-700' : ''
+      }">${pct}% de la IDA diaria</strong> de un niño de ${weight} kg (IDA ${formatNumber(estimate.adiMg)} mg).`;
+    }
+  }
+  kidsForm?.addEventListener('input', updateKids);
+  updateKids();
+</script>

@@ -1,0 +1,118 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+
+export const prerender = true;
+---
+
+<MainLayout
+  title="Reportar un error o solicitar revisión"
+  description="Avísanos si una ficha tiene un error. Si eres el fabricante, solicita una revisión con la etiqueta vigente."
+  canonicalPath="/reportar"
+  noindex
+>
+  <div class="mx-auto max-w-lg">
+    <h1 class="text-2xl font-extrabold">Reportar o solicitar revisión</h1>
+    <p class="mt-1 text-sm text-stone-600">
+      Revisamos cada mensaje. Las marcas reciben respuesta por correo y, si la etiqueta cambió, actualizamos la ficha con el
+      mismo método público que aplicamos a todos.
+    </p>
+
+    <form id="report-form" class="mt-5 space-y-4">
+      <fieldset class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <legend class="mb-1 text-sm font-medium">Tipo</legend>
+        {
+          [
+            { value: 'error', label: 'Error en una ficha' },
+            { value: 'marca', label: 'Soy la marca' },
+            { value: 'empresa', label: 'Empresas y datos' },
+          ].map((k) => (
+            <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm has-[:checked]:border-emerald-500 has-[:checked]:bg-emerald-50">
+              <input type="radio" name="kind" value={k.value} class="accent-emerald-600" />
+              {k.label}
+            </label>
+          ))
+        }
+      </fieldset>
+
+      <label class="block">
+        <span class="text-sm font-medium">Código de barras (EAN) del producto</span>
+        <input name="ean" inputmode="numeric" pattern="[0-9]{8,14}" class="mt-1 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5" />
+      </label>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label class="block">
+          <span class="text-sm font-medium">Nombre</span>
+          <input name="name" autocomplete="name" class="mt-1 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5" />
+        </label>
+        <label class="block">
+          <span class="text-sm font-medium">Correo <span data-email-hint class="text-stone-500">(opcional)</span></span>
+          <input name="email" type="email" autocomplete="email" class="mt-1 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5" />
+        </label>
+      </div>
+      <label class="block" data-org>
+        <span class="text-sm font-medium">Empresa o marca</span>
+        <input name="organization" autocomplete="organization" class="mt-1 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5" />
+      </label>
+      <label class="block">
+        <span class="text-sm font-medium">Mensaje</span>
+        <textarea
+          name="message"
+          required
+          minlength="10"
+          rows="5"
+          class="mt-1 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5"
+          placeholder="Ej: la etiqueta actual ya no tiene sucralosa; adjuntamos el enlace a la ficha técnica."
+        ></textarea>
+      </label>
+      <!-- Honeypot para bots: no completar -->
+      <input name="website" tabindex="-1" autocomplete="off" class="hidden" aria-hidden="true" />
+
+      <button type="submit" class="w-full rounded-2xl bg-stone-900 px-4 py-3 font-semibold text-white">Enviar</button>
+      <p id="report-status" class="min-h-5 text-sm" aria-live="polite"></p>
+      <p class="text-xs text-stone-500">Usamos tu correo solo para responderte sobre este mensaje.</p>
+    </form>
+  </div>
+</MainLayout>
+
+<script>
+  import { API_BASE } from '../lib/site';
+
+  const form = document.getElementById('report-form') as HTMLFormElement;
+  const status = document.getElementById('report-status') as HTMLParagraphElement;
+  const params = new URLSearchParams(location.search);
+  const initialKind = ['error', 'marca', 'empresa'].includes(params.get('tipo') ?? '') ? params.get('tipo')! : 'error';
+  (form.querySelector(`input[name="kind"][value="${initialKind}"]`) as HTMLInputElement).checked = true;
+  (form.elements.namedItem('ean') as HTMLInputElement).value = params.get('ean')?.replace(/\D/g, '') ?? '';
+
+  const syncKind = () => {
+    const kind = (form.elements.namedItem('kind') as RadioNodeList).value;
+    const needsEmail = kind !== 'error';
+    (form.elements.namedItem('email') as HTMLInputElement).required = needsEmail;
+    form.querySelector<HTMLElement>('[data-email-hint]')!.textContent = needsEmail ? '(obligatorio)' : '(opcional)';
+    form.querySelector<HTMLElement>('[data-org]')!.hidden = kind === 'error';
+  };
+  form.addEventListener('change', syncKind);
+  syncKind();
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const body = Object.fromEntries(new FormData(form).entries());
+    status.className = 'min-h-5 text-sm text-stone-600';
+    status.textContent = 'Enviando…';
+    try {
+      const res = await fetch(`${API_BASE}/api/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? 'No se pudo enviar');
+      form.reset();
+      syncKind();
+      status.className = 'min-h-5 text-sm text-emerald-700';
+      status.textContent = '¡Gracias! Recibimos tu mensaje.';
+    } catch (err) {
+      status.className = 'min-h-5 text-sm text-red-700';
+      status.textContent = (err as Error).message || 'Sin conexión. Inténtalo de nuevo.';
+    }
+  });
+</script>

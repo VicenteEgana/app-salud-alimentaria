@@ -1,0 +1,15 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import { href } from '../lib/site';
+
+Astro.response.status = 404;
+---
+
+<MainLayout title="Página no encontrada" description="La página que buscas no existe." noindex>
+  <div class="mx-auto max-w-md py-16 text-center">
+    <p class="text-5xl font-extrabold text-emerald-700">404</p>
+    <h1 class="mt-2 text-xl font-bold">No encontramos esta página</h1>
+    <p class="mt-2 text-stone-600">Puede que el producto aún no esté en nuestra base. Escanéalo y lo evaluamos al instante.</p>
+    <a href={href('/escanear')} class="mt-6 inline-flex rounded-2xl bg-emerald-600 px-5 py-3 font-semibold text-white">Ir al escáner</a>
+  </div>
+</MainLayout>
