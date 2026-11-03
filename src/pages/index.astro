@@ -92,8 +92,13 @@ const jsonLd = [
 
   <!-- Rankings -->
   <section id="rankings" class="mt-10 scroll-mt-4">
-    <h2 class="text-xl font-bold">Rankings por categoría</h2>
-    <p class="text-sm text-stone-600">Los más sanos y las trampas del pasillo, con datos verificados.</p>
+    <div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+      <div>
+        <h2 class="text-xl font-bold">Rankings por categoría</h2>
+        <p class="text-sm text-stone-600">Los más sanos y las trampas del pasillo, con datos verificados.</p>
+      </div>
+      <a href={href('/productos')} class="text-sm font-semibold text-emerald-700 hover:underline">Explorar todos los productos →</a>
+    </div>
     <ul class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
       {
         categories.map((c) => (
@@ -131,6 +136,16 @@ const jsonLd = [
       </section>
     )
   }
+
+  <section class="mt-10 flex flex-col gap-3 rounded-3xl border border-emerald-200 bg-emerald-50 p-5 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h2 class="text-lg font-bold text-emerald-950">¿Dudas entre dos productos?</h2>
+      <p class="text-sm text-emerald-900/80">Elige dos y míralos lado a lado: sellos, NOVA, aditivos y tabla por 100 g.</p>
+    </div>
+    <a href={href('/comparar')} class="shrink-0 rounded-2xl bg-emerald-600 px-5 py-3 text-center text-sm font-bold text-white hover:bg-emerald-700">
+      ⚔️ Armar una comparación
+    </a>
+  </section>
 
   {
     featured.length > 0 && (

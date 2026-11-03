@@ -45,10 +45,18 @@ const jsonLd = [
 ];
 ---
 
-<MainLayout title={title} description={description} canonicalPath={versusPath(a.slug, b.slug)} noindex={!a.verified || !b.verified} jsonLd={jsonLd}>
+<MainLayout
+  title={title}
+  description={description}
+  canonicalPath={versusPath(a.slug, b.slug)}
+  noindex={!a.verified || !b.verified}
+  jsonLd={jsonLd}
+  compareDock={false}
+>
   <nav class="mb-3 text-xs text-stone-500" aria-label="Migas de pan">
     <a href="/" class="hover:underline">Inicio</a> ›
-    <a href={`/ranking/${a.categorySlug}`} class="hover:underline">{categoryName(a.categorySlug)}</a> › Comparar
+    <a href={`/ranking/${a.categorySlug}`} class="hover:underline">{categoryName(a.categorySlug)}</a> ›
+    <a href="/comparar" class="hover:underline">Comparar</a>
   </nav>
   <h1 class="mb-1 text-2xl leading-tight font-extrabold">{a.name} <span class="text-stone-400">vs</span> {b.name}</h1>
   <p class="mb-5 text-stone-600">

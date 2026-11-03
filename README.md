@@ -11,6 +11,8 @@ Web SSR en Cloudflare Pages + D1, y app móvil (Android/iOS) con Capacitor desde
 - **Modo niños**: leyenda de edulcorantes propuesta por el MINSAL y % de la ingesta diaria admisible según el peso del niño.
 - **Perfiles** (celíaco, sin lactosa, APLV, vegano, diabetes, niños), guardados solo en el dispositivo.
 - **Mi lista**: puntaje del carro, alternativas para reemplazar, "Comprar en Jumbo" y alertas cuando un producto cambia su receta.
+- **Catálogo** (`/productos`) con buscador, categoría, filtros rápidos (mejor evaluados, falsos sin sellos, NOVA 1-2, sin sellos) y orden.
+- **Comparador**: botón "+ Comparar" en cada tarjeta con barra flotante, constructor directo en `/comparar` con dos buscadores, y "Cambiar" dentro de cada versus.
 - **Rankings SEO** por categoría, comparativas A vs B, "más sano y más barato por kilo", página de reformulaciones.
 - **Sin conexión**: el escáner funciona en el pasillo con un paquete de productos guardado.
 - **Canales**: bot de WhatsApp y API B2B con claves y cuota.
@@ -60,7 +62,7 @@ Opcionales: `TURNSTILE_SECRET_KEY` (+ `PUBLIC_TURNSTILE_SITE_KEY` en el build), 
 
 ## App móvil
 
-La app empaqueta las páginas que no dependen de la base (inicio, escáner, lista, perfil, metodología, reportar, empresas) y consume la API de producción en `PUBLIC_API_BASE_URL` (por defecto `https://sanopasillo.cl`). Las fichas, rankings y comparativas se abren en la web.
+La app empaqueta las páginas que no dependen de la base (inicio, escáner, lista, perfil, metodología, reportar, empresas), más el catálogo y el comparador, que piden sus datos a la API; todo consume la API de producción en `PUBLIC_API_BASE_URL` (por defecto `https://sanopasillo.cl`). Las fichas, rankings y comparativas se abren en la web.
 
 ```bash
 PUBLIC_API_BASE_URL=https://sanopasillo.cl npm run cap:sync

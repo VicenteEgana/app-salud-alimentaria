@@ -1,4 +1,4 @@
-/** Sitemap dinámico: home, rankings, productos verificados y cruces versus entre el Top 8 de cada categoría. */
+/** Sitemap dinámico: home, catálogo, comparador, rankings, productos verificados y cruces versus entre el Top 8 de cada categoría. */
 import type { APIRoute } from 'astro';
 import { getCategorySummaries, getTopSlugsByCategory, getVerifiedSlugs } from '../lib/db';
 import { SITE_URL } from '../lib/site';
@@ -32,6 +32,8 @@ export const GET: APIRoute = async ({ locals }) => {
 
   const entries = [
     urlEntry('/', { changefreq: 'daily', priority: '1.0' }),
+    urlEntry('/productos', { changefreq: 'daily', priority: '0.8' }),
+    urlEntry('/comparar', { changefreq: 'weekly', priority: '0.6' }),
     urlEntry('/escanear', { changefreq: 'monthly', priority: '0.6' }),
     urlEntry('/metodologia', { changefreq: 'monthly', priority: '0.5' }),
     urlEntry('/reformulaciones', { changefreq: 'daily', priority: '0.6' }),

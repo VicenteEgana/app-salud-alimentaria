@@ -4,6 +4,7 @@ import MinsalSeals from '../../components/MinsalSeals.astro';
 import ProductCard from '../../components/ProductCard.astro';
 import ScoreCircle from '../../components/ScoreCircle.astro';
 import { categoryName } from '../../lib/categories';
+import { toCompareItem } from '../../lib/compare';
 import {
   DATA_SOURCE_LABELS,
   getHealthierAlternatives,
@@ -113,6 +114,14 @@ const clientData = JSON.stringify({ product, offers }).replace(/</g, '\\u003c');
             class="rounded-xl border border-stone-300 px-3 py-2 text-sm font-semibold hover:bg-stone-50"
           >
             + Mi lista
+          </button>
+          <button
+            type="button"
+            data-compare-product={JSON.stringify(toCompareItem(product))}
+            aria-pressed="false"
+            class="rounded-xl border border-emerald-600 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 aria-pressed:bg-emerald-600 aria-pressed:text-white"
+          >
+            + Comparar
           </button>
           <a href={`/reportar?tipo=error&ean=${product.ean}`} class="rounded-xl px-3 py-2 text-sm text-stone-600 hover:bg-stone-100">
             Reportar un error

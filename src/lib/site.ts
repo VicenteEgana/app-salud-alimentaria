@@ -11,8 +11,11 @@ export const API_BASE = IS_APP
   ? (import.meta.env.PUBLIC_API_BASE_URL ?? SITE_URL).replace(/\/$/, '')
   : '';
 
-/** Páginas que no dependen de la base de datos y por eso también van empaquetadas en la app. */
-export const STATIC_PAGES = ['/', '/escanear', '/lista', '/perfil', '/metodologia', '/reportar', '/empresas'] as const;
+/**
+ * Páginas que también van empaquetadas en la app: no dependen de la base o, como /productos y /comparar,
+ * cargan los datos desde la API en el navegador cuando no hay SSR.
+ */
+export const STATIC_PAGES = ['/', '/escanear', '/lista', '/perfil', '/metodologia', '/reportar', '/empresas', '/productos', '/comparar'] as const;
 
 /**
  * Enlace interno. En la app solo existen las páginas estáticas; el resto (fichas, rankings,

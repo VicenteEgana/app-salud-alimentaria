@@ -1,0 +1,254 @@
+---
+/**
+ * Barra flotante de comparación. Escucha los clics de cualquier botón [data-compare-product] de la página,
+ * guarda hasta 2 productos en localStorage (sanopasillo_compare_queue) y lleva al versus canónico.
+ * En móvil queda sobre la barra de navegación inferior.
+ */
+---
+
+<div
+  id="compare-dock"
+  class="invisible fixed inset-x-0 bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-40 translate-y-full px-2 opacity-0 transition-[translate,opacity,visibility] duration-300 ease-out sm:bottom-4"
+  aria-hidden="true"
+  inert
+>
+  <section
+    id="compare-dock-panel"
+    aria-label="Comparación de productos"
+    class="mx-auto max-w-2xl rounded-3xl border border-stone-200 bg-white/95 p-2 shadow-2xl backdrop-blur sm:flex sm:items-center sm:gap-3 sm:p-3"
+  >
+    <div id="compare-dock-slots" class="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-1.5"></div>
+    <div class="mt-2 sm:mt-0 sm:w-60 sm:shrink-0">
+      <p id="compare-dock-tip" hidden class="mb-1.5 text-center text-[11px] leading-snug text-amber-800">
+        💡 Tip: Estás comparando categorías distintas
+      </p>
+      <a
+        id="compare-dock-cta"
+        role="button"
+        class="flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 aria-disabled:bg-stone-200 aria-disabled:text-stone-600"
+      >
+        Elige el 2° producto (1/2)
+      </a>
+    </div>
+    <p id="compare-dock-status" class="sr-only" aria-live="polite"></p>
+  </section>
+</div>
+
+<dialog
+  id="compare-picker"
+  aria-labelledby="compare-picker-title"
+  class="m-0 mt-auto max-h-[85dvh] w-full max-w-none overflow-hidden rounded-t-3xl bg-white p-0 text-stone-900 shadow-2xl backdrop:bg-stone-900/40 sm:m-auto sm:max-w-lg sm:rounded-3xl"
+>
+  <div class="flex items-center justify-between gap-3 border-b border-stone-200 px-4 py-3">
+    <h2 id="compare-picker-title" class="font-bold">Elige el 2° producto</h2>
+    <button type="button" data-picker-close class="flex h-9 w-9 items-center justify-center rounded-full text-xl text-stone-500 hover:bg-stone-100" aria-label="Cerrar">
+      ×
+    </button>
+  </div>
+  <div class="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+    <p id="compare-picker-hint" class="mb-2 text-xs text-stone-500"></p>
+    <label for="compare-picker-input" class="sr-only">Buscar producto por nombre, marca o código de barras</label>
+    <input
+      id="compare-picker-input"
+      type="search"
+      placeholder="Busca por nombre, marca o EAN"
+      class="w-full rounded-2xl border border-stone-300 bg-white px-4 py-3 text-base focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 focus:outline-none"
+    />
+    <ul id="compare-picker-list" class="mt-2 max-h-[55dvh] overflow-y-auto"></ul>
+  </div>
+</dialog>
+
+<script>
+  import { categoryName } from '../lib/categories';
+  import {
+    MAX_COMPARE,
+    isInQueue,
+    loadQueue,
+    mixedCategories,
+    onQueueChange,
+    parseCompareItem,
+    queueVersusPath,
+    removeItem,
+    saveQueue,
+    setSlot,
+    toggleItem,
+    type CompareItem,
+  } from '../lib/compare';
+  import { scoreCircle } from '../lib/product-html';
+  import { attachProductPicker } from '../lib/product-picker';
+  import { href } from '../lib/site';
+  import { escapeHtml as e } from '../lib/text';
+
+  const dock = document.getElementById('compare-dock') as HTMLDivElement;
+  const panel = document.getElementById('compare-dock-panel') as HTMLElement;
+  const slotsEl = document.getElementById('compare-dock-slots') as HTMLDivElement;
+  const tip = document.getElementById('compare-dock-tip') as HTMLParagraphElement;
+  const cta = document.getElementById('compare-dock-cta') as HTMLAnchorElement;
+  const status = document.getElementById('compare-dock-status') as HTMLParagraphElement;
+  const dialog = document.getElementById('compare-picker') as HTMLDialogElement;
+  const pickerInput = document.getElementById('compare-picker-input') as HTMLInputElement;
+  const pickerList = document.getElementById('compare-picker-list') as HTMLUListElement;
+  const pickerHint = document.getElementById('compare-picker-hint') as HTMLParagraphElement;
+
+  const HIDDEN = ['invisible', 'translate-y-full', 'opacity-0'];
+  const VISIBLE = ['visible', 'translate-y-0', 'opacity-100'];
+
+  let queue = loadQueue();
+  let firstPaint = true;
+
+  function slotHtml(item: CompareItem | undefined): string {
+    if (!item) {
+      return `<button type="button" data-dock-pick class="flex min-h-14 items-center justify-center rounded-2xl border-2 border-dashed border-stone-300 px-2 text-center text-[11px] leading-snug font-medium text-stone-500 hover:border-emerald-400 hover:text-emerald-700">Selecciona un 2° producto para comparar</button>`;
+    }
+    return `<div class="relative flex min-h-14 min-w-0 items-center gap-2 rounded-2xl bg-stone-100 p-1.5 pr-2">
+      ${scoreCircle(item.finalScore, 'h-9 w-9 text-xs', 'inset-[3px]')}
+      <div class="min-w-0">
+        <p class="truncate text-[10px] font-medium tracking-wide text-stone-500 uppercase">${e(item.brand)}</p>
+        <p class="line-clamp-2 text-xs leading-tight font-semibold">${e(item.name)}</p>
+      </div>
+      <button type="button" data-dock-remove="${e(item.ean)}" aria-label="Quitar ${e(item.name)} de la comparación"
+        class="absolute -top-1.5 -right-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-stone-800 text-sm leading-none text-white shadow before:absolute before:-inset-2.5 hover:bg-stone-950">×</button>
+    </div>`;
+  }
+
+  function readButton(button: HTMLElement): CompareItem | null {
+    try {
+      return parseCompareItem(JSON.parse(button.dataset.compareProduct ?? ''));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Estado de todos los botones "+ Comparar" de la página. */
+  function paintButtons() {
+    document.querySelectorAll<HTMLElement>('[data-compare-product]').forEach((button) => {
+      const item = readButton(button);
+      if (!item) return;
+      const on = isInQueue(queue, item.ean);
+      const label = on ? '✓ Seleccionado' : '+ Comparar';
+      if (button.getAttribute('aria-pressed') !== String(on)) button.setAttribute('aria-pressed', String(on));
+      // Solo si cambia: escribir el texto es una mutación y el MutationObserver volvería a llamar aquí.
+      if (button.textContent !== label) button.textContent = label;
+    });
+  }
+
+  function render() {
+    const visible = queue.length > 0;
+    if (firstPaint) dock.style.transition = 'none';
+    dock.classList.remove(...(visible ? HIDDEN : VISIBLE));
+    dock.classList.add(...(visible ? VISIBLE : HIDDEN));
+    dock.toggleAttribute('inert', !visible);
+    dock.setAttribute('aria-hidden', String(!visible));
+    if (firstPaint) {
+      void dock.offsetHeight;
+      dock.style.transition = '';
+      firstPaint = false;
+    }
+
+    slotsEl.innerHTML = `${slotHtml(queue[0])}<span class="self-center text-[11px] font-black text-stone-400">VS</span>${slotHtml(queue[1])}`;
+    const path = queueVersusPath(queue);
+    if (path) {
+      cta.href = href(path);
+      cta.removeAttribute('aria-disabled');
+      cta.textContent = '⚔️ Comparar ahora (2/2)';
+    } else {
+      cta.removeAttribute('href');
+      cta.setAttribute('aria-disabled', 'true');
+      cta.textContent = `Elige el 2° producto (${queue.length}/${MAX_COMPARE})`;
+    }
+    tip.hidden = !mixedCategories(queue);
+    paintButtons();
+    // Que la barra no tape el final de la página.
+    document.body.style.paddingBottom = visible ? `${panel.offsetHeight + 12}px` : '';
+  }
+
+  function announce(text: string) {
+    status.textContent = text;
+  }
+
+  // --- Buscador del 2° producto --------------------------------------------
+
+  attachProductPicker({
+    input: pickerInput,
+    list: pickerList,
+    inline: true,
+    context: () => ({ category: queue[0]?.categorySlug, excludeEans: queue.map((i) => i.ean) }),
+    onPick: (item) => {
+      queue = queue.length ? setSlot(queue, 1, item) : [item];
+      saveQueue(queue);
+      announce(`${item.name} agregado a la comparación.`);
+      dialog.close();
+    },
+  });
+
+  function openPicker() {
+    const first = queue[0];
+    pickerHint.textContent = first
+      ? `Para comparar con ${first.name}. Al tocar el buscador te sugerimos productos de ${categoryName(first.categorySlug).toLowerCase()}.`
+      : '';
+    pickerInput.value = '';
+    dialog.showModal();
+    pickerInput.focus();
+  }
+
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog || (event.target as Element).closest('[data-picker-close]')) dialog.close();
+  });
+
+  // --- Clics en toda la página --------------------------------------------
+
+  document.addEventListener('click', (event) => {
+    const target = event.target as Element;
+    const button = target.closest<HTMLElement>('[data-compare-product]');
+    if (button) {
+      event.preventDefault();
+      const item = readButton(button);
+      if (!item) return;
+      const removing = isInQueue(queue, item.ean);
+      const replaced = !removing && queue.length >= MAX_COMPARE ? queue[1] : undefined;
+      queue = toggleItem(queue, item);
+      saveQueue(queue);
+      announce(
+        removing
+          ? `${item.name} quitado de la comparación.`
+          : replaced
+            ? `${item.name} reemplazó a ${replaced.name} en la comparación.`
+            : `${item.name} agregado a la comparación (${queue.length}/${MAX_COMPARE}).`,
+      );
+      return;
+    }
+    const remove = target.closest<HTMLElement>('[data-dock-remove]');
+    if (remove) {
+      queue = removeItem(queue, remove.dataset.dockRemove ?? '');
+      saveQueue(queue);
+      announce('Producto quitado de la comparación.');
+      return;
+    }
+    if (target.closest('[data-dock-pick]') || (target.closest('#compare-dock-cta') && !queueVersusPath(queue))) {
+      event.preventDefault();
+      openPicker();
+    }
+  });
+
+  onQueueChange((next) => {
+    queue = next;
+    render();
+  });
+
+  // Botones que aparecen después (catálogo, escáner, buscadores).
+  let scheduled = false;
+  new MutationObserver(() => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      paintButtons();
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  new ResizeObserver(() => {
+    if (queue.length) document.body.style.paddingBottom = `${panel.offsetHeight + 12}px`;
+  }).observe(panel);
+
+  render();
+</script>

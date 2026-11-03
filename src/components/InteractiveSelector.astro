@@ -1,0 +1,192 @@
+---
+/**
+ * Constructor de comparativas: dos buscadores predictivos (Producto A y Producto B). Al elegir ambos
+ * navega a la URL canónica /comparar/a-vs-b. Comparte la cola con la barra de comparación, así que llega
+ * con lo que el usuario ya eligió en el catálogo.
+ */
+import type { VersusSuggestion } from '../lib/catalog';
+import { versusSuggestionHtml } from '../lib/product-html';
+
+interface Props {
+  /** Comparativas populares desde el servidor; null en la app (se piden a la API). */
+  suggestions: VersusSuggestion[] | null;
+}
+
+const { suggestions } = Astro.props;
+const slots = [
+  { index: 0, label: 'Producto A', placeholder: 'Ej: yogurt natural, pan integral…' },
+  { index: 1, label: 'Producto B', placeholder: 'Busca su rival por nombre o EAN' },
+];
+---
+
+<div id="versus-selector">
+  <section class="rounded-3xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5" aria-label="Elige 2 productos">
+    <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+      {
+        slots.map((slot) => (
+          <>
+            {slot.index === 1 && (
+              <div class="flex items-center justify-center sm:pt-9" aria-hidden="true">
+                <span class="rounded-full bg-stone-900 px-3 py-1 text-xs font-black text-white">VS</span>
+              </div>
+            )}
+            <div data-slot={slot.index} class="relative min-w-0">
+              <p class="mb-1.5 text-xs font-semibold tracking-wide text-stone-500 uppercase">{slot.label}</p>
+              <div data-slot-card hidden />
+              <div data-slot-search class="relative">
+                <label for={`versus-input-${slot.index}`} class="sr-only">
+                  Buscar {slot.label.toLowerCase()} por nombre, marca o código de barras
+                </label>
+                <input
+                  id={`versus-input-${slot.index}`}
+                  type="search"
+                  placeholder={slot.placeholder}
+                  class="w-full rounded-2xl border border-stone-300 bg-white px-4 py-3 text-base focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 focus:outline-none"
+                />
+                <ul
+                  data-slot-list
+                  hidden
+                  class="absolute inset-x-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-2xl border border-stone-200 bg-white p-1 shadow-xl"
+                />
+              </div>
+            </div>
+          </>
+        ))
+      }
+    </div>
+    <p id="versus-tip" hidden class="mt-3 text-center text-xs text-amber-800">
+      💡 Tip: Estás comparando categorías distintas. La tabla igual compara por 100 g / 100 ml.
+    </p>
+    <a
+      id="versus-cta"
+      hidden
+      class="mt-4 flex w-full items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3.5 text-base font-bold text-white shadow-sm hover:bg-emerald-700"
+    >
+      ⚔️ Comparar ahora
+    </a>
+    <p id="versus-status" class="sr-only" aria-live="polite"></p>
+  </section>
+
+  <section class="mt-8">
+    <h2 class="text-lg font-bold">Comparativas populares listas para un clic</h2>
+    <p class="text-sm text-stone-600">El mejor evaluado de cada categoría contra un falso sin sellos del mismo pasillo.</p>
+    <div id="versus-popular" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2" data-loaded={suggestions ? 'true' : 'false'}>
+      {
+        suggestions && suggestions.length > 0 && (
+          <Fragment set:html={suggestions.map(versusSuggestionHtml).join('')} />
+        )
+      }
+      {suggestions && suggestions.length === 0 && <p class="text-sm text-stone-500">Aún no hay suficientes productos para sugerir comparativas.</p>}
+    </div>
+  </section>
+</div>
+
+<script>
+  import { CATEGORIES, categoryName } from '../lib/categories';
+  import { pairSuggestions } from '../lib/catalog';
+  import { fetchCatalog } from '../lib/catalog-client';
+  import { loadQueue, mixedCategories, saveQueue, toCompareItem, type CompareItem } from '../lib/compare';
+  import { scoreCircle, skeletonCardsHtml, versusSuggestionHtml } from '../lib/product-html';
+  import { attachProductPicker, type PickerHandle } from '../lib/product-picker';
+  import { href } from '../lib/site';
+  import { escapeHtml as e } from '../lib/text';
+  import { versusPath } from '../lib/versus';
+
+  const root = document.getElementById('versus-selector') as HTMLDivElement;
+  const slotEls = [...root.querySelectorAll<HTMLElement>('[data-slot]')];
+  const tip = document.getElementById('versus-tip') as HTMLParagraphElement;
+  const cta = document.getElementById('versus-cta') as HTMLAnchorElement;
+  const status = document.getElementById('versus-status') as HTMLParagraphElement;
+  const popular = document.getElementById('versus-popular') as HTMLDivElement;
+
+  // Posiciones fijas A/B; en la cola se guardan compactadas (la barra de comparación usa la misma).
+  const initialQueue = loadQueue();
+  const slots: (CompareItem | null)[] = [initialQueue[0] ?? null, initialQueue[1] ?? null];
+  const filled = () => slots.filter((s): s is CompareItem => s !== null);
+  const pickers: PickerHandle[] = [];
+
+  function cardHtml(item: CompareItem): string {
+    return `<div class="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3">
+      ${scoreCircle(item.finalScore, 'h-14 w-14 text-lg', 'inset-[5px]')}
+      <div class="min-w-0 flex-1">
+        <p class="truncate text-[11px] font-medium tracking-wide text-stone-500 uppercase">${e(item.brand)} · ${e(categoryName(item.categorySlug))}</p>
+        <p class="line-clamp-2 leading-snug font-semibold">${e(item.name)}</p>
+      </div>
+      <button type="button" data-slot-change class="shrink-0 rounded-xl border border-stone-300 bg-white px-3 py-2 text-xs font-semibold hover:bg-stone-50" aria-label="Cambiar ${e(item.name)}">🔄 Cambiar</button>
+    </div>`;
+  }
+
+  function render() {
+    slotEls.forEach((el, i) => {
+      const item = slots[i];
+      const card = el.querySelector<HTMLElement>('[data-slot-card]')!;
+      const search = el.querySelector<HTMLElement>('[data-slot-search]')!;
+      card.hidden = !item;
+      search.hidden = Boolean(item);
+      card.innerHTML = item ? cardHtml(item) : '';
+    });
+    const [a, b] = slots;
+    tip.hidden = !(a && b && mixedCategories([a, b]));
+    cta.hidden = !(a && b);
+    if (a && b) cta.href = href(versusPath(a.slug, b.slug));
+  }
+
+  slotEls.forEach((el, i) => {
+    const input = el.querySelector<HTMLInputElement>('input')!;
+    const list = el.querySelector<HTMLUListElement>('[data-slot-list]')!;
+    pickers[i] = attachProductPicker({
+      input,
+      list,
+      context: () => ({ category: slots[1 - i]?.categorySlug, excludeEans: filled().map((s) => s.ean) }),
+      onPick: (item) => {
+        slots[i] = toCompareItem(item);
+        input.value = '';
+        saveQueue(filled());
+        render();
+        const [a, b] = slots;
+        if (a && b) {
+          status.textContent = 'Abriendo la comparación…';
+          location.href = href(versusPath(a.slug, b.slug));
+          return;
+        }
+        status.textContent = `${item.name} elegido. Ahora elige el otro producto.`;
+        // En pantallas táctiles no abrimos el teclado solos: solo acercamos el otro buscador.
+        const other = slotEls[1 - i]!;
+        if (matchMedia('(pointer: fine)').matches) pickers[1 - i]?.focus();
+        else other.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      },
+    });
+
+    el.addEventListener('click', (event) => {
+      if (!(event.target as Element).closest('[data-slot-change]')) return;
+      slots[i] = null;
+      saveQueue(filled());
+      render();
+      input.focus();
+    });
+  });
+
+  // La app no tiene SSR: arma las sugerencias con la API (mejores y falsos sin sellos por categoría).
+  async function loadPopular() {
+    popular.innerHTML = skeletonCardsHtml(2);
+    try {
+      const results = await Promise.all(
+        CATEGORIES.flatMap((c) => [
+          fetchCatalog({ category: c.slug, sort: 'score_desc', limit: 2 }),
+          fetchCatalog({ category: c.slug, filters: ['fake_healthy'], sort: 'score_asc', limit: 2 }),
+        ]),
+      );
+      const best = results.filter((_, i) => i % 2 === 0).flatMap((r) => r.items);
+      const traps = results.filter((_, i) => i % 2 === 1).flatMap((r) => r.items);
+      const pairs = pairSuggestions(best, traps);
+      popular.innerHTML = pairs.length
+        ? pairs.map(versusSuggestionHtml).join('')
+        : '<p class="text-sm text-stone-500">Aún no hay suficientes productos para sugerir comparativas.</p>';
+    } catch {
+      popular.innerHTML = '<p class="text-sm text-stone-500">Sin conexión: no pudimos cargar las comparativas sugeridas.</p>';
+    }
+  }
+
+  render();
+  if (popular.dataset.loaded !== 'true') void loadPopular();
+</script>

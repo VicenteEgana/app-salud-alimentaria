@@ -1,0 +1,62 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import ProductCatalog from '../../components/ProductCatalog.astro';
+import { CATEGORIES, categoryName } from '../../lib/categories';
+import { DEFAULT_LIMIT, parseCatalogQuery, type CatalogQuery, type ProductSummary } from '../../lib/catalog';
+import { getCategorySummaries, searchCatalog } from '../../lib/db';
+import { IS_APP, SITE_URL, href } from '../../lib/site';
+
+// La app (build estático) no tiene base: el catálogo se pide a la API desde el navegador.
+let query: CatalogQuery = { q: '', category: '', filters: [], sort: 'score_desc', limit: DEFAULT_LIMIT, offset: 0 };
+let initial: { items: ProductSummary[]; total: number } | null = null;
+let categories = CATEGORIES.map((c) => ({ slug: c.slug, name: c.name, total: 0 }));
+
+if (!IS_APP) {
+  const db = Astro.locals.runtime.env.DB;
+  query = { ...parseCatalogQuery(Astro.url.searchParams), limit: DEFAULT_LIMIT, offset: 0 };
+  const [result, summaries] = await Promise.all([searchCatalog(db, query), getCategorySummaries(db)]);
+  initial = result;
+  if (summaries.length) {
+    categories = summaries.map((s) => ({ slug: s.categorySlug, name: categoryName(s.categorySlug), total: s.total }));
+  }
+  Astro.response.headers.set('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=3600');
+}
+
+const allTotal = categories.reduce((sum, c) => sum + c.total, 0);
+const filtered = Boolean(query.q || query.category || query.filters.length || query.sort !== 'score_desc');
+const title = 'Todos los productos de supermercado evaluados en Chile';
+const description = `Explora ${allTotal > 0 ? `${allTotal} ` : ''}productos de supermercado chilenos con su puntaje, sellos MINSAL, nivel NOVA y aditivos. Filtra los mejor evaluados y los falsos sin sellos, y compáralos lado a lado.`;
+
+const jsonLd = initial?.items.length
+  ? [
+      {
+        '@context': 'https://schema.org',
+        '@type': 'ItemList',
+        name: 'Productos de supermercado evaluados por SanoPasillo',
+        numberOfItems: initial.total,
+        itemListElement: initial.items.map((p, i) => ({
+          '@type': 'ListItem',
+          position: i + 1,
+          name: `${p.name} (${p.brand})`,
+          url: `${SITE_URL}/producto/${p.slug}`,
+        })),
+      },
+    ]
+  : [];
+---
+
+<MainLayout title={title} description={description} canonicalPath="/productos" noindex={filtered} jsonLd={filtered ? [] : jsonLd}>
+  <nav class="mb-3 text-xs text-stone-500" aria-label="Migas de pan"><a href={href('/')} class="hover:underline">Inicio</a> › Productos</nav>
+  <div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <h1 class="text-2xl leading-tight font-extrabold sm:text-3xl">Explora los productos</h1>
+      <p class="mt-1 max-w-2xl text-stone-600">
+        Busca, filtra y toca <strong class="font-semibold text-emerald-700">+ Comparar</strong> en dos productos para verlos lado a lado.
+      </p>
+    </div>
+    <a href={href('/comparar')} class="rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-stone-50">
+      ⚔️ Comparador directo
+    </a>
+  </div>
+  <ProductCatalog query={query} initial={initial} categories={categories} />
+</MainLayout>

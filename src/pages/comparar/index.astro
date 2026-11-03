@@ -1,0 +1,33 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import InteractiveSelector from '../../components/InteractiveSelector.astro';
+import type { VersusSuggestion } from '../../lib/catalog';
+import { getVersusSuggestions } from '../../lib/db';
+import { IS_APP, href } from '../../lib/site';
+
+// En la app (sin base) las comparativas sugeridas se piden a la API desde el navegador.
+let suggestions: VersusSuggestion[] | null = null;
+if (!IS_APP) {
+  suggestions = await getVersusSuggestions(Astro.locals.runtime.env.DB);
+  Astro.response.headers.set('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
+}
+---
+
+<MainLayout
+  title="Comparador de alimentos: elige 2 productos y míralos lado a lado"
+  description="Compara dos productos de supermercado de Chile: puntaje, sellos MINSAL, nivel NOVA, aditivos de riesgo y tabla nutricional por 100 g. Busca por nombre, marca o código de barras."
+  canonicalPath="/comparar"
+  compareDock={false}
+>
+  <nav class="mb-3 text-xs text-stone-500" aria-label="Migas de pan"><a href={href('/')} class="hover:underline">Inicio</a> › Comparar</nav>
+  <h1 class="text-2xl leading-tight font-extrabold sm:text-3xl">Compara 2 productos lado a lado</h1>
+  <p class="mt-1 mb-5 max-w-2xl text-stone-600">
+    Escribe el nombre, la marca o el código de barras de cada uno. Al tocar un buscador te sugerimos productos de la misma
+    categoría que el otro.
+  </p>
+  <InteractiveSelector suggestions={suggestions} />
+  <p class="mt-6 text-sm text-stone-600">
+    ¿Prefieres recorrer el pasillo? <a href={href('/productos')} class="font-semibold text-emerald-700 hover:underline">Explora el catálogo</a>
+    y toca <strong>+ Comparar</strong> en dos productos.
+  </p>
+</MainLayout>

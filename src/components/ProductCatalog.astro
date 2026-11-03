@@ -1,0 +1,280 @@
+---
+/**
+ * Grilla del catálogo con buscador (debounce 250 ms), categoría, filtros rápidos combinables y orden.
+ * En la web llega con la primera página renderizada en el servidor; en la app (sin SSR) la pide a la API.
+ * El estado de los filtros se refleja en la URL para poder compartirla.
+ */
+import {
+  CATALOG_FILTERS,
+  CATALOG_SORTS,
+  FILTER_HINTS,
+  FILTER_LABELS,
+  SORT_LABELS,
+  type CatalogQuery,
+  type ProductSummary,
+} from '../lib/catalog';
+import { productCardHtml } from '../lib/product-html';
+
+interface Props {
+  query: CatalogQuery;
+  /** Primera página desde el servidor; null en la app. */
+  initial: { items: ProductSummary[]; total: number } | null;
+  categories: { slug: string; name: string; total: number }[];
+}
+
+const { query, initial, categories } = Astro.props;
+const state = { query, total: initial?.total ?? null, loaded: initial?.items.length ?? 0 };
+const chipClass =
+  'rounded-full border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 transition hover:border-stone-400 aria-pressed:border-emerald-600 aria-pressed:bg-emerald-600 aria-pressed:text-white';
+const selectClass =
+  'w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-sm font-medium focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 focus:outline-none';
+---
+
+<div id="catalog">
+  <form id="catalog-controls" role="search" class="space-y-3" method="get">
+    <div class="relative">
+      <label for="catalog-q" class="sr-only">Buscar por nombre, marca o código de barras</label>
+      <svg aria-hidden="true" viewBox="0 0 24 24" class="pointer-events-none absolute top-1/2 left-3.5 h-5 w-5 -translate-y-1/2 text-stone-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35"></path>
+      </svg>
+      <input
+        id="catalog-q"
+        name="q"
+        type="search"
+        value={query.q}
+        placeholder="Busca por nombre, marca o código EAN"
+        autocomplete="off"
+        class="w-full rounded-2xl border border-stone-300 bg-white py-3 pr-4 pl-11 text-base shadow-sm focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 focus:outline-none"
+      />
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <label>
+        <span class="sr-only">Categoría</span>
+        <select id="catalog-category" name="category" class={selectClass}>
+          <option value="">Todas las categorías</option>
+          {
+            categories.map((c) => (
+              <option value={c.slug} selected={c.slug === query.category}>
+                {c.name}
+                {c.total > 0 ? ` (${c.total})` : ''}
+              </option>
+            ))
+          }
+        </select>
+      </label>
+      <label>
+        <span class="sr-only">Ordenar por</span>
+        <select id="catalog-sort" name="sort" class={selectClass}>
+          {
+            CATALOG_SORTS.map((s) => (
+              <option value={s} selected={s === query.sort}>
+                {SORT_LABELS[s]}
+              </option>
+            ))
+          }
+        </select>
+      </label>
+    </div>
+    <div class="flex flex-wrap gap-2" role="group" aria-label="Filtros rápidos">
+      {
+        CATALOG_FILTERS.map((f) => (
+          <button
+            type="button"
+            data-filter={f}
+            aria-pressed={query.filters.includes(f) ? 'true' : 'false'}
+            title={FILTER_HINTS[f]}
+            class={chipClass}
+          >
+            {FILTER_LABELS[f]}
+          </button>
+        ))
+      }
+    </div>
+  </form>
+
+  <div class="mt-5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+    <p id="catalog-count" class="text-sm font-medium text-stone-600" aria-live="polite">
+      {initial ? `${initial.total} ${initial.total === 1 ? 'producto' : 'productos'}` : 'Cargando productos…'}
+    </p>
+    <a id="catalog-ranking" hidden class="text-sm font-semibold text-emerald-700 hover:underline"></a>
+  </div>
+
+  <div id="catalog-grid" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3" aria-busy={initial ? 'false' : 'true'}>
+    {initial && <Fragment set:html={initial.items.map((p) => productCardHtml(p)).join('')} />}
+  </div>
+
+  <div id="catalog-empty" hidden class="mt-3 rounded-2xl border border-dashed border-stone-300 bg-white px-5 py-8 text-center">
+    <p class="font-semibold">No encontramos productos con esos filtros.</p>
+    <p class="mt-1 text-sm text-stone-600">Prueba con menos filtros o con otra palabra. ¿Lo tienes a mano? Escanéalo y lo evaluamos.</p>
+    <button type="button" id="catalog-reset" class="mt-3 rounded-xl border border-stone-300 px-4 py-2 text-sm font-semibold hover:bg-stone-50">
+      Quitar filtros
+    </button>
+  </div>
+
+  <p id="catalog-error" hidden class="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+    No pudimos cargar los productos. Revisa tu conexión.
+    <button type="button" id="catalog-retry" class="ml-1 font-semibold underline">Reintentar</button>
+  </p>
+
+  <div class="mt-5 flex justify-center">
+    <button
+      type="button"
+      id="catalog-more"
+      hidden
+      class="rounded-2xl border border-stone-300 bg-white px-6 py-3 text-sm font-semibold shadow-sm hover:bg-stone-50 disabled:opacity-60"
+    >
+      Cargar más
+    </button>
+  </div>
+</div>
+
+<script id="catalog-state" type="application/json" set:html={JSON.stringify(state).replace(/</g, '\\u003c')} />
+
+<script>
+  import { categoryName } from '../lib/categories';
+  import { DEFAULT_LIMIT, catalogParams, parseCatalogQuery, type CatalogFilter, type CatalogQuery, type CatalogSort } from '../lib/catalog';
+  import { fetchCatalog } from '../lib/catalog-client';
+  import { productCardHtml, skeletonCardsHtml } from '../lib/product-html';
+  import { IS_APP, href } from '../lib/site';
+
+  const DEBOUNCE_MS = 250;
+
+  const form = document.getElementById('catalog-controls') as HTMLFormElement;
+  const input = document.getElementById('catalog-q') as HTMLInputElement;
+  const categorySelect = document.getElementById('catalog-category') as HTMLSelectElement;
+  const sortSelect = document.getElementById('catalog-sort') as HTMLSelectElement;
+  const chips = [...form.querySelectorAll<HTMLButtonElement>('[data-filter]')];
+  const grid = document.getElementById('catalog-grid') as HTMLDivElement;
+  const count = document.getElementById('catalog-count') as HTMLParagraphElement;
+  const rankingLink = document.getElementById('catalog-ranking') as HTMLAnchorElement;
+  const empty = document.getElementById('catalog-empty') as HTMLDivElement;
+  const errorBox = document.getElementById('catalog-error') as HTMLParagraphElement;
+  const more = document.getElementById('catalog-more') as HTMLButtonElement;
+
+  const state = JSON.parse(document.getElementById('catalog-state')!.textContent!) as {
+    query: CatalogQuery;
+    total: number | null;
+    loaded: number;
+  };
+
+  // En la app la página es estática: la consulta sale de la URL del dispositivo.
+  let query: CatalogQuery = IS_APP ? parseCatalogQuery(new URLSearchParams(location.search)) : state.query;
+  let total = state.total ?? 0;
+  let loaded = state.loaded;
+  let controller: AbortController | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  function paintControls() {
+    input.value = query.q;
+    if (query.category && ![...categorySelect.options].some((o) => o.value === query.category)) {
+      categorySelect.add(new Option(categoryName(query.category), query.category));
+    }
+    categorySelect.value = query.category;
+    sortSelect.value = query.sort;
+    for (const chip of chips) chip.setAttribute('aria-pressed', String(query.filters.includes(chip.dataset.filter as CatalogFilter)));
+  }
+
+  function readControls(): CatalogQuery {
+    return {
+      q: input.value.trim().slice(0, 60),
+      category: categorySelect.value,
+      filters: chips.filter((c) => c.getAttribute('aria-pressed') === 'true').map((c) => c.dataset.filter as CatalogFilter),
+      sort: sortSelect.value as CatalogSort,
+      limit: DEFAULT_LIMIT,
+      offset: 0,
+    };
+  }
+
+  function paintMeta() {
+    count.textContent = `${total} ${total === 1 ? 'producto' : 'productos'}`;
+    empty.hidden = total > 0;
+    more.hidden = loaded >= total;
+    more.disabled = false;
+    more.textContent = `Cargar más (${loaded} de ${total})`;
+    if (query.category) {
+      rankingLink.href = href(`/ranking/${query.category}`);
+      rankingLink.textContent = `Ver ranking de ${categoryName(query.category).toLowerCase()} →`;
+      rankingLink.hidden = false;
+    } else {
+      rankingLink.hidden = true;
+    }
+  }
+
+  function syncUrl() {
+    const qs = catalogParams({ ...query, limit: DEFAULT_LIMIT, offset: 0 }).toString();
+    history.replaceState(history.state, '', `${location.pathname}${qs ? `?${qs}` : ''}`);
+  }
+
+  async function load(reset: boolean) {
+    controller?.abort();
+    controller = new AbortController();
+    errorBox.hidden = true;
+    if (reset) {
+      grid.setAttribute('aria-busy', 'true');
+      grid.innerHTML = skeletonCardsHtml(6);
+      empty.hidden = true;
+      more.hidden = true;
+    } else {
+      more.disabled = true;
+      more.textContent = 'Cargando…';
+    }
+    const offset = reset ? 0 : loaded;
+    try {
+      const result = await fetchCatalog({ ...query, offset, limit: DEFAULT_LIMIT }, controller.signal);
+      const html = result.items.map((p) => productCardHtml(p)).join('');
+      if (reset) grid.innerHTML = html;
+      else grid.insertAdjacentHTML('beforeend', html);
+      loaded = offset + result.items.length;
+      total = result.total;
+      paintMeta();
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      if (reset) grid.innerHTML = '';
+      errorBox.hidden = false;
+      more.disabled = false;
+      more.textContent = 'Cargar más';
+    } finally {
+      grid.setAttribute('aria-busy', 'false');
+    }
+  }
+
+  function apply(debounce = false) {
+    clearTimeout(timer);
+    const run = () => {
+      query = readControls();
+      syncUrl();
+      void load(true);
+    };
+    if (debounce) timer = setTimeout(run, DEBOUNCE_MS);
+    else run();
+  }
+
+  input.addEventListener('input', () => apply(true));
+  categorySelect.addEventListener('change', () => apply());
+  sortSelect.addEventListener('change', () => apply());
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    input.blur();
+    apply();
+  });
+  for (const chip of chips) {
+    chip.addEventListener('click', () => {
+      chip.setAttribute('aria-pressed', String(chip.getAttribute('aria-pressed') !== 'true'));
+      apply();
+    });
+  }
+  more.addEventListener('click', () => void load(false));
+  document.getElementById('catalog-retry')!.addEventListener('click', () => void load(loaded === 0));
+  document.getElementById('catalog-reset')!.addEventListener('click', () => {
+    query = { ...query, q: '', category: '', filters: [] };
+    paintControls();
+    apply();
+  });
+
+  paintControls();
+  if (state.total === null || IS_APP) {
+    void load(true);
+  } else {
+    paintMeta();
+  }
+</script>

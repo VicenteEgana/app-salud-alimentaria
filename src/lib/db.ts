@@ -1,6 +1,22 @@
 /** Acceso a Cloudflare D1: filas ↔ objetos tipados. */
-import { evaluateProduct, type Nutrients, type ProductEvaluation, type RawProductInput } from './scorer';
-import { slugify } from './text';
+import {
+  TOP_SCORE,
+  pairSuggestions,
+  type CatalogFilter,
+  type CatalogQuery,
+  type CatalogSort,
+  type ProductSummary,
+  type VersusSuggestion,
+} from './catalog';
+import {
+  evaluateProduct,
+  type MinsalSeal,
+  type NovaGroup,
+  type Nutrients,
+  type ProductEvaluation,
+  type RawProductInput,
+} from './scorer';
+import { normalizeText, slugify } from './text';
 
 type D1PreparedStatement = ReturnType<D1Database['prepare']>;
 
@@ -277,6 +293,133 @@ export function searchProducts(db: D1Database, query: string, limit = 12): Promi
          ORDER BY final_score DESC LIMIT ?3`,
       )
       .bind(like, query, limit),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Catálogo (/productos, /comparar, /api/products/search)
+// ---------------------------------------------------------------------------
+
+/** Columnas livianas de ProductSummary: NOVA, aditivos y sellos salen del JSON de la evaluación. */
+const SUMMARY_COLUMNS = `ean, slug, name, brand, category_slug, image_url, final_score, is_fake_healthy, seals_count,
+  json_extract(evaluation_json, '$.novaGroup') AS nova_group,
+  json_array_length(evaluation_json, '$.additives') AS additives_count,
+  json_extract(evaluation_json, '$.minsalSeals') AS seals_json`;
+
+interface SummaryRow {
+  ean: string;
+  slug: string;
+  name: string;
+  brand: string;
+  category_slug: string;
+  image_url: string | null;
+  final_score: number;
+  is_fake_healthy: number;
+  seals_count: number;
+  nova_group: number | null;
+  additives_count: number | null;
+  seals_json: string | null;
+}
+
+export function rowToSummary(r: SummaryRow): ProductSummary {
+  const seals = parse<MinsalSeal[]>(r.seals_json) ?? [];
+  const nova = Number(r.nova_group);
+  return {
+    ean: r.ean,
+    slug: r.slug,
+    name: r.name,
+    brand: r.brand,
+    categorySlug: r.category_slug,
+    finalScore: r.final_score,
+    novaGroup: (nova >= 1 && nova <= 4 ? nova : 4) as NovaGroup,
+    sealsCount: r.seals_count,
+    seals,
+    isFakeHealthy: r.is_fake_healthy === 1,
+    additivesCount: Number(r.additives_count ?? 0),
+    imageUrl: r.image_url,
+  };
+}
+
+/** SQLite solo pasa a minúsculas el ASCII: las vocales con tilde y la ñ se reemplazan a mano. */
+const ACCENT_FOLDS: [string, string][] = [
+  ['á', 'a'], ['é', 'e'], ['í', 'i'], ['ó', 'o'], ['ú', 'u'], ['ü', 'u'], ['ñ', 'n'],
+  ['Á', 'a'], ['É', 'e'], ['Í', 'i'], ['Ó', 'o'], ['Ú', 'u'], ['Ü', 'u'], ['Ñ', 'n'],
+];
+const FOLDED_TEXT = ACCENT_FOLDS.reduce((sql, [from, to]) => `replace(${sql}, '${from}', '${to}')`, "lower(name || ' ' || brand)");
+
+const FILTER_SQL: Record<CatalogFilter, string> = {
+  top: `final_score >= ${TOP_SCORE}`,
+  fake_healthy: 'is_fake_healthy = 1',
+  real_food: "json_extract(evaluation_json, '$.novaGroup') <= 2",
+  no_seals: 'seals_count = 0',
+};
+
+const SORT_SQL: Record<CatalogSort, string> = {
+  score_desc: 'final_score DESC, name',
+  score_asc: 'final_score ASC, name',
+  additives: 'additives_count ASC, final_score DESC, name',
+};
+
+/**
+ * WHERE del catálogo. Cada palabra del texto debe aparecer en "nombre marca" (sin tildes, en cualquier
+ * orden); un texto de 8 a 14 dígitos también busca el EAN exacto.
+ */
+export function catalogWhere(query: Pick<CatalogQuery, 'q' | 'category' | 'filters'>): { where: string; binds: string[] } {
+  const where = ['verified = 1'];
+  const binds: string[] = [];
+  const words = normalizeText(query.q).replace(/[%_\\]/g, '').split(' ').filter(Boolean).slice(0, 6);
+  if (words.length) {
+    const text = words.map(() => `${FOLDED_TEXT} LIKE ?`).join(' AND ');
+    const ean = query.q.replace(/\s/g, '');
+    if (/^\d{8,14}$/.test(ean)) {
+      where.push(`(ean = ? OR (${text}))`);
+      binds.push(ean);
+    } else {
+      where.push(`(${text})`);
+    }
+    binds.push(...words.map((w) => `%${w}%`));
+  }
+  if (query.category) {
+    where.push('category_slug = ?');
+    binds.push(query.category);
+  }
+  for (const f of new Set(query.filters)) where.push(FILTER_SQL[f]);
+  return { where: where.join(' AND '), binds };
+}
+
+export async function searchCatalog(db: D1Database, query: CatalogQuery): Promise<{ items: ProductSummary[]; total: number }> {
+  const { where, binds } = catalogWhere(query);
+  const [list, count] = await db.batch([
+    db
+      .prepare(`SELECT ${SUMMARY_COLUMNS} FROM products WHERE ${where} ORDER BY ${SORT_SQL[query.sort]} LIMIT ? OFFSET ?`)
+      .bind(...binds, query.limit, query.offset),
+    db.prepare(`SELECT COUNT(*) AS total FROM products WHERE ${where}`).bind(...binds),
+  ]);
+  return {
+    items: (list!.results as SummaryRow[]).map(rowToSummary),
+    total: Number((count!.results[0] as { total: number } | undefined)?.total ?? 0),
+  };
+}
+
+/** "Comparativas populares": los mejores de cada categoría contra sus falsos sin sellos de peor puntaje. */
+export async function getVersusSuggestions(db: D1Database, perCategory = 2, max = 6): Promise<VersusSuggestion[]> {
+  const ranked = (where: string, order: string) =>
+    db
+      .prepare(
+        `SELECT * FROM (
+           SELECT ${SUMMARY_COLUMNS}, ROW_NUMBER() OVER (PARTITION BY category_slug ORDER BY ${order}) AS rn
+           FROM products WHERE ${where}
+         ) WHERE rn <= ? ORDER BY category_slug, rn`,
+      )
+      .bind(perCategory);
+  const [best, traps] = await db.batch([
+    ranked('verified = 1', 'final_score DESC, slug'),
+    ranked('verified = 1 AND is_fake_healthy = 1', 'final_score ASC, slug'),
+  ]);
+  return pairSuggestions(
+    (best!.results as SummaryRow[]).map(rowToSummary),
+    (traps!.results as SummaryRow[]).map(rowToSummary),
+    max,
   );
 }
 

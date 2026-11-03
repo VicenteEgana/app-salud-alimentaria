@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import ComparisonDock from '../components/ComparisonDock.astro';
 import { IS_APP, SITE_NAME, SITE_TAGLINE, SITE_URL, href } from '../lib/site';
 
 interface Props {
@@ -11,20 +12,25 @@ interface Props {
   /** Objetos JSON-LD que se inyectan en <head>. */
   jsonLd?: Record<string, unknown>[];
   ogImage?: string | null;
+  /** Barra flotante de comparación (se apaga en /comparar, que tiene su propio selector). */
+  compareDock?: boolean;
 }
 
-const { title, description, canonicalPath, noindex = false, jsonLd = [], ogImage } = Astro.props;
+const { title, description, canonicalPath, noindex = false, jsonLd = [], ogImage, compareDock = true } = Astro.props;
 const fullTitle = title.includes(SITE_NAME) ? title : `${title} | ${SITE_NAME}`;
 const canonical = `${SITE_URL}${canonicalPath ?? Astro.url.pathname}`;
 const path = Astro.url.pathname.replace(/\.html$/, '').replace(/\/index$/, '/');
 
-const nav = [
+/** `desktop`: solo en la cabecera (la barra inferior móvil tiene 5 espacios). */
+const nav: { path: string; label: string; icon: string; desktop?: boolean }[] = [
   { path: '/', label: 'Inicio', icon: 'M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z' },
-  { path: '/#rankings', label: 'Rankings', icon: 'M8 21V11M16 21V5M12 21v-6M4 21h16' },
+  { path: '/productos', label: 'Explorar', icon: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35' },
+  { path: '/comparar', label: 'Comparar', icon: 'M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4', desktop: true },
   { path: '/escanear', label: 'Escanear', icon: 'M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13 8v8M17 8v8' },
   { path: '/lista', label: 'Mi lista', icon: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01' },
   { path: '/perfil', label: 'Perfil', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0' },
 ];
+const mobileNav = nav.filter((item) => !item.desktop);
 const footerLinks = [
   { path: '/metodologia', label: 'Metodología y fuentes' },
   { path: '/reformulaciones', label: 'Reformulaciones' },
@@ -32,8 +38,8 @@ const footerLinks = [
   { path: '/reportar', label: 'Reportar un error' },
 ];
 const isActive = (p: string) =>
-  p === '/' ? path === '/' : p === '/#rankings' ? path.startsWith('/ranking') : path.startsWith(p);
-const navHref = (p: string) => (p === '/#rankings' ? `${href('/')}#rankings` : href(p));
+  p === '/' ? path === '/' : p === '/productos' ? path.startsWith('/productos') || path.startsWith('/ranking') : path.startsWith(p);
+const navHref = (p: string) => href(p);
 ---
 
 <!doctype html>
@@ -97,6 +103,8 @@ const navHref = (p: string) => (p === '/#rankings' ? `${href('/')}#rankings` : h
       </p>
     </footer>
 
+    {compareDock && <ComparisonDock />}
+
     <!-- Barra inferior mobile-first -->
     <nav
       class="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 backdrop-blur sm:hidden"
@@ -104,7 +112,7 @@ const navHref = (p: string) => (p === '/#rankings' ? `${href('/')}#rankings` : h
     >
       <ul class="grid grid-cols-5">
         {
-          nav.map((item) => (
+          mobileNav.map((item) => (
             <li>
               <a
                 href={navHref(item.path)}
